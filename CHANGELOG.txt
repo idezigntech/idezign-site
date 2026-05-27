@@ -1,0 +1,64 @@
+iDezign Toolkit - Changelog
+===========================
+Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big changes.
+The version shown in the launcher's title bar comes from "toolkitVersion" in
+iDezign_Versions.json - bump it there with every change.
+
+v2.4  - 2026-05-26  - Migrate tool (user-data migration)
+  * New menu item "Migrate" (item 6): backs up Desktop / Downloads / Documents /
+    Pictures + Chrome bookmarks to a timestamped Backup_<stamp> folder, reports
+    the size of each folder, and Defender-scans the result before you carry it
+    over. Can write STRAIGHT to removable media so nothing is left on the old PC.
+  * Restore mode lays data back on the new PC - Downloads filtered to recent
+    files only (default last 60 days) to leave the junk behind; other folders
+    restored in full. Chrome migrates via sign-in + Sync (bookmarks AND
+    passwords); a manual password CSV export is opt-in for no-Google clients.
+  * Non-destructive to the source machine (robocopy copy - never move/mirror).
+  * Session guard: refuses to run if launched as a different account than the
+    logged-in user (would back up the wrong profile) - matters because the GUI
+    launches tools elevated.
+  * Uses the shared Common module (Show-VersionCheck, Get-iDezignBanner,
+    Start-iDezignTranscript, Read-iDezignYN, Start-ProcessWithTimeout) with
+    built-in fallbacks so it still runs standalone off a USB.
+  * Launcher window grown (430 -> 480) to fit the 6th row; GUI fallback tool
+    list re-synced to the real set (SavePDF in, retired VM Sandbox out).
+
+v2.3  - 2026-05-25  - Footer fix
+  * Fixed the footer where a long status line (e.g. after launching a tool)
+    overlapped the "iDezign Technology" label. Status and label now sit in
+    separate columns; long status text trims with an ellipsis instead of
+    colliding. Shortened the launch status message too.
+
+v2.2  - 2026-05-25  - Save report as PDF
+  * New menu item "Save PDF to Desktop" (item 5): converts the latest
+    Diagnostics HTML report to a dated PDF on the Desktop using Microsoft Edge's
+    built-in headless print-to-PDF (no extra software). Reveals the file when done.
+
+v2.1  - 2026-05-25  - Remediation feedback + service-check cleanup
+  * Remediation now announces every check as it runs ("checking X ...") so the
+    tech sees the full health pass, not just the problems found.
+  * Essential-services check no longer flags Manual / trigger-start services
+    (msiserver, wuauserv on Win10/11) - only Automatic services that are
+    actually stopped are reported. Removes the false positives.
+
+v2.0  - 2026-05-25  - Web-style redesign (major)
+  * New light launcher matching the iDezign.ai brand: white background, Jost/
+    Century Gothic font, dark-on-white logo, crimson divider + "SCRIPTS" label,
+    vertical script list (replaces the dark crimson-tile layout).
+  * Menu is manifest-driven (iDezign_Versions.json "tools"): real scripts only.
+  * Each tool launches in its OWN elevated window (separate-window model) - the
+    reliable approach for tools that self-stage and reboot (e.g. Cleanup).
+  * Launcher auto-elevates on double-click (quoted path; works from folders with
+    spaces); PowerShell host console hidden.
+  * Window ~half size (400x430), not always-on-top, normal taskbar window.
+  * Logo enlarged, transparent margin trimmed, high-quality (Fant) scaling.
+  * Drag the header (above the red line) to move; double-click to maximize/restore.
+  * Menu order: Diagnostics, Cleanup, Remediation, Reset to OOBE.
+  * VM Sandbox removed from the menu.
+  * Crash fixes carried over from v1.x: UTF-8 manifest read, DispatcherTimer
+    (no raw background threads), crash-safe Application.Run window show.
+
+v1.x  - dark crimson-tile launcher (superseded by v2.0)
+  * Manifest as single source of truth; .exe and .bat share one GUI codebase;
+    fixed the missing-VM-Sandbox drift, emoji-encoding gibberish, the 2-second
+    startup crash, and the separate-window launch behavior.
