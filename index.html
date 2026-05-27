@@ -1,32 +1,219 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>idezign-site</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      margin: 0;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: linear-gradient(135deg, #667eea, #764ba2);
-      color: #fff;
-    }
-    .container {
-      text-align: center;
-      padding: 2rem;
-    }
-    h1 { font-size: 3rem; margin: 0 0 1rem; }
-    p { font-size: 1.25rem; opacity: 0.9; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iDezign.ai — Technology to the Power of AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ffffff;
+    --ink:#161616;
+    --muted:#6a6a6a;
+    --hair:#ececec;
+    --red:#A82828;
+    --red-deep:#8f1f1f;
+    --ease:cubic-bezier(.22,.61,.36,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Jost',sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    font-weight:300;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+  header{
+    position:sticky;top:0;z-index:50;
+    background:rgba(255,255,255,.82);
+    backdrop-filter:saturate(180%) blur(14px);
+    border-bottom:1px solid var(--hair);
+  }
+  .nav{display:flex;align-items:center;justify-content:space-between;height:84px}
+  .logo-text{font-family:'Jost',sans-serif;font-weight:300;font-size:24px;letter-spacing:.01em;color:var(--ink)}
+  .logo-text .dot{color:var(--red);font-weight:400}
+  .nav nav{display:flex;gap:38px;align-items:center}
+  .nav nav a{
+    font-size:14px;letter-spacing:.04em;color:var(--muted);
+    position:relative;padding:4px 0;transition:color .3s var(--ease);
+  }
+  .nav nav a::after{
+    content:"";position:absolute;left:0;bottom:-2px;height:1px;width:0;
+    background:var(--red);transition:width .35s var(--ease);
+  }
+  .nav nav a:hover{color:var(--ink)}
+  .nav nav a:hover::after{width:100%}
+  .nav .cta{
+    border:1px solid var(--ink);color:var(--ink);
+    padding:10px 20px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;
+    transition:all .35s var(--ease);
+  }
+  .nav .cta:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .nav .cta::after{display:none}
+  .hero{position:relative;padding:130px 0 120px;overflow:hidden}
+  .hero .caretghost{
+    position:absolute;right:-60px;top:40px;font-size:560px;line-height:1;
+    color:var(--red);opacity:.035;font-weight:200;pointer-events:none;user-select:none;
+  }
+  .eyebrow{
+    display:flex;align-items:center;gap:14px;
+    font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--red);
+    margin-bottom:30px;font-weight:400;
+  }
+  .eyebrow::before{content:"";width:34px;height:1px;background:var(--red)}
+  h1{
+    font-weight:200;font-size:clamp(40px,6.4vw,82px);line-height:1.04;
+    letter-spacing:-.02em;max-width:14ch;margin-bottom:34px;
+  }
+  h1 .accent{color:var(--red);font-weight:300}
+  .lede{
+    font-size:clamp(17px,1.7vw,21px);color:var(--muted);max-width:52ch;
+    font-weight:300;margin-bottom:46px;
+  }
+  .actions{display:flex;align-items:center;gap:30px;flex-wrap:wrap}
+  .btn-primary{
+    background:var(--red);color:#fff;padding:15px 30px;font-size:15px;
+    letter-spacing:.03em;transition:all .35s var(--ease);
+    box-shadow:0 1px 0 rgba(0,0,0,0);
+  }
+  .btn-primary:hover{background:var(--red-deep);transform:translateY(-2px);box-shadow:0 10px 30px -10px rgba(168,40,40,.5)}
+  .btn-text{
+    font-size:15px;color:var(--ink);border-bottom:1px solid var(--ink);padding-bottom:3px;
+    transition:all .3s var(--ease);
+  }
+  .btn-text:hover{color:var(--red);border-color:var(--red)}
+  .services{padding:30px 0 110px}
+  .sec-head{
+    font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--red);
+    font-weight:400;margin-bottom:46px;display:flex;align-items:center;gap:14px;
+  }
+  .sec-head::before{content:"";width:34px;height:1px;background:var(--red)}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:54px}
+  .card .tick{width:30px;height:2px;background:var(--red);margin-bottom:20px;transition:width .4s var(--ease)}
+  .card:hover .tick{width:54px}
+  .card h3{font-weight:400;font-size:21px;margin-bottom:12px;letter-spacing:-.01em}
+  .card p{font-size:15.5px;color:var(--muted);font-weight:300}
+  .card .num{font-size:12px;color:#bdbdbd;letter-spacing:.1em;margin-bottom:18px;font-weight:400}
+  .band{border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:64px 0}
+  .band .wrap{display:flex;align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap}
+  .band .big{font-size:clamp(26px,3vw,38px);font-weight:200;letter-spacing:-.01em;max-width:20ch}
+  .band .big b{font-weight:400;color:var(--red)}
+  .band a.link{font-size:15px;color:var(--muted);border-bottom:1px solid var(--hair);padding-bottom:3px;transition:all .3s var(--ease);white-space:nowrap}
+  .band a.link:hover{color:var(--ink);border-color:var(--red)}
+  footer{background:#0c0c0c;color:#fff;padding:84px 0 46px;margin-top:0}
+  footer .top{display:flex;justify-content:space-between;gap:50px;flex-wrap:wrap;padding-bottom:54px;border-bottom:1px solid #242424}
+  footer .logo-text-dark{font-family:'Jost',sans-serif;font-weight:300;font-size:32px;letter-spacing:.01em;color:#fff;display:block;margin-bottom:18px}
+  footer .logo-text-dark .dot{color:var(--red);font-weight:400}
+  footer .tag{color:#8a8a8a;font-size:14px;max-width:34ch;font-weight:300}
+  footer .cols{display:flex;gap:70px;flex-wrap:wrap}
+  footer .col h4{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--red);font-weight:400;margin-bottom:18px}
+  footer .col a,footer .col p{display:block;color:#cfcfcf;font-size:15px;margin-bottom:11px;font-weight:300;transition:color .3s var(--ease)}
+  footer .col a:hover{color:#fff}
+  footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding-top:28px;color:#6a6a6a;font-size:13px;letter-spacing:.03em}
+  .reveal{opacity:0;transform:translateY(22px);animation:rise .9s var(--ease) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.31s}
+  .d4{animation-delay:.44s}.d5{animation-delay:.57s}.d6{animation-delay:.70s}
+  @media(max-width:780px){
+    .wrap{padding:0 24px}
+    .nav nav{display:none}
+    .grid{grid-template-columns:1fr;gap:40px}
+    .hero{padding:80px 0 70px}
+    .hero .caretghost{font-size:300px;right:-30px;opacity:.04}
+    footer .top{flex-direction:column}
+  }
+</style>
 </head>
 <body>
-  <div class="container">
-    <h1>Welcome to idezign-site</h1>
-    <p>Your starter page is live.</p>
+<header>
+  <div class="wrap nav">
+    <a href="#" class="logo-text">iDezign<span class="dot">.ai</span></a>
+    <nav>
+      <a href="#about">About</a>
+      <a href="#services">Services</a>
+      <a href="#projects">Projects</a>
+      <a href="#contact">Contact</a>
+      <a href="#contact" class="cta">Start a conversation</a>
+    </nav>
   </div>
+</header>
+<section class="hero">
+  <div class="caretghost">^</div>
+  <div class="wrap">
+    <div class="eyebrow reveal d1">Artificial Intelligence · Northern California</div>
+    <h1 class="reveal d2">AI built for the way you <span class="accent">actually</span> work.</h1>
+    <p class="lede reveal d3">Twenty-six years in IT, now putting AI to work for real businesses. Practical integrations, custom scripts, and tools that fit the systems you already run — not the other way around.</p>
+    <div class="actions reveal d4">
+      <a href="#projects" class="btn-primary">See recent builds &nbsp;→</a>
+      <a href="#contact" class="btn-text">Start a conversation</a>
+    </div>
+  </div>
+</section>
+<section class="services" id="services">
+  <div class="wrap">
+    <div class="sec-head reveal d1">What I do</div>
+    <div class="grid">
+      <div class="card reveal d2">
+        <div class="num">01</div>
+        <div class="tick"></div>
+        <h3>AI Integrations</h3>
+        <p>Bringing AI into the systems your business already runs on — quietly, reliably, and without ripping out what works.</p>
+      </div>
+      <div class="card reveal d3">
+        <div class="num">02</div>
+        <div class="tick"></div>
+        <h3>Custom Scripts</h3>
+        <p>Small, sharp builds that automate the repetitive work nobody wants to do twice. Time back, every week.</p>
+      </div>
+      <div class="card reveal d4">
+        <div class="num">03</div>
+        <div class="tick"></div>
+        <h3>Advisory</h3>
+        <p>Straight answers on which AI is worth your time and budget — and which is just noise. No hype, just fit.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="band" id="about">
+  <div class="wrap">
+    <div class="big">Backed by <b>26 years</b> of hands-on IT, networking, and systems work.</div>
+    <a class="link" href="https://idezign.com">Visit iDezign Tech (IT services) →</a>
+  </div>
+</section>
+<footer id="contact">
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <span class="logo-text-dark">iDezign<span class="dot">.ai</span></span>
+        <p class="tag">Technology to the power of AI. Practical artificial intelligence for real-world business, based in Redding, California.</p>
+      </div>
+      <div class="cols">
+        <div class="col">
+          <h4>Contact</h4>
+          <a href="mailto:eric@idezign.com">eric@idezign.com</a>
+          <a href="tel:5304106450">530&nbsp;410&nbsp;6450</a>
+        </div>
+        <div class="col">
+          <h4>Explore</h4>
+          <a href="#about">About</a>
+          <a href="#services">Services</a>
+          <a href="#projects">Projects</a>
+          <a href="https://idezign.com">iDezign Tech ↗</a>
+        </div>
+      </div>
+    </div>
+    <div class="bottom">
+      <span>© 2026 iDezign.ai · Eric Morton</span>
+      <span>Technology to the Power of AI</span>
+    </div>
+  </div>
+</footer>
 </body>
 </html>
