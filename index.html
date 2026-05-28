@@ -98,11 +98,14 @@
   }
   .sec-head::before{content:"";width:34px;height:1px;background:var(--red)}
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:54px}
+  .card{display:block;color:inherit}
   .card .tick{width:30px;height:2px;background:var(--red);margin-bottom:20px;transition:width .4s var(--ease)}
   .card:hover .tick{width:54px}
   .card h3{font-weight:400;font-size:21px;margin-bottom:12px;letter-spacing:-.01em}
   .card p{font-size:15.5px;color:var(--muted);font-weight:300}
   .card .num{font-size:12px;color:#bdbdbd;letter-spacing:.1em;margin-bottom:18px;font-weight:400}
+  .card-cta{display:inline-block;margin-top:18px;font-size:13px;color:var(--red);letter-spacing:.04em;border-bottom:1px solid transparent;padding-bottom:2px;transition:border-color .3s var(--ease)}
+  a.card:hover .card-cta{border-color:var(--red)}
   .band{border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:64px 0}
   .band .wrap{display:flex;align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap}
   .band .big{font-size:clamp(26px,3vw,38px);font-weight:200;letter-spacing:-.01em;max-width:20ch}
@@ -152,7 +155,7 @@
     <h1 class="reveal d2">AI built for the way you <span class="accent">actually</span> work.</h1>
     <p class="lede reveal d3">Twenty-six years in IT, now putting AI to work for real businesses. Practical integrations, custom scripts, and tools that fit the systems you already run — not the other way around.</p>
     <div class="actions reveal d4">
-      <a href="#projects" class="btn-primary">See recent builds &nbsp;→</a>
+      <a href="/toolkit/" class="btn-primary">See recent builds &nbsp;→</a>
       <a href="#contact" class="btn-text">Start a conversation</a>
     </div>
   </div>
@@ -167,12 +170,13 @@
         <h3>AI Integrations</h3>
         <p>Bringing AI into the systems your business already runs on — quietly, reliably, and without ripping out what works.</p>
       </div>
-      <div class="card reveal d3">
+      <a class="card reveal d3" href="/toolkit/">
         <div class="num">02</div>
         <div class="tick"></div>
         <h3>Custom Scripts</h3>
         <p>Small, sharp builds that automate the repetitive work nobody wants to do twice. Time back, every week.</p>
-      </div>
+        <span class="card-cta">View the toolkit&nbsp;→</span>
+      </a>
       <div class="card reveal d4">
         <div class="num">03</div>
         <div class="tick"></div>
