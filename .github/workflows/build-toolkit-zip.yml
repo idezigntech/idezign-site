@@ -1,0 +1,85 @@
+name: Build toolkit zip
+
+# Rebuilds dist/iDezign-Toolkit.zip whenever the source the zip contains
+# changes (PowerShell scripts, the manifest, the .bat launcher, the
+# CHANGELOG, or the two logos packaged with the toolkit), and commits
+# the fresh zip back to main. Manual run also available.
+#
+# No infinite loop: the bot's commit only touches dist/, and dist/ is
+# NOT in the trigger paths below.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - 'CHANGELOG.txt'
+      - 'logos/iDezign-ai-logo-v2-transparent.png'
+      - 'logos/iDezign-logo-trim.png'
+      - '.github/workflows/build-toolkit-zip.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read toolkit version from manifest
+        id: ver
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('scripts/iDezign_Versions.json'))['toolkitVersion'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Toolkit version: $VERSION"
+
+      - name: Stage files for the zip
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          STAGE="$(mktemp -d)"
+          echo "$STAGE" > /tmp/stage_path
+
+          # PowerShell, manifest, batch launcher (flat in zip, no subdirs)
+          for f in scripts/*.ps1 scripts/*.psm1 scripts/*.json scripts/*.bat; do
+            cp "$f" "$STAGE/"
+          done
+
+          # Brand assets the launcher displays
+          cp logos/iDezign-ai-logo-v2-transparent.png "$STAGE/"
+          cp logos/iDezign-logo-trim.png "$STAGE/"
+
+          # Changelog (so end users see what changed)
+          cp CHANGELOG.txt "$STAGE/"
+
+          echo "--- staged ---"
+          ls -la "$STAGE"
+
+      - name: Build the zip
+        run: |
+          set -euo pipefail
+          STAGE=$(cat /tmp/stage_path)
+          mkdir -p dist
+          rm -f dist/iDezign-Toolkit.zip
+          # -X strips extra file attributes for cleaner archives
+          (cd "$STAGE" && zip -X -r "$GITHUB_WORKSPACE/dist/iDezign-Toolkit.zip" .)
+          echo "--- zip contents ---"
+          unzip -l dist/iDezign-Toolkit.zip
+
+      - name: Commit zip back to main (if changed)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- dist/iDezign-Toolkit.zip; then
+            echo "dist/iDezign-Toolkit.zip is unchanged — nothing to commit."
+            exit 0
+          fi
+
+          git add dist/iDezign-Toolkit.zip
+          git commit -m "chore(toolkit): rebuild zip (v${{ steps.ver.outputs.version }})"
+          git push
