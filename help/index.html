@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iDezign Help — connect with Eric</title>
+  <meta name="description" content="Need IT help? One click to start a session with Eric. No install, nothing left behind.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --red: #A82828;
+      --red-deep: #8f1f1f;
+      --ink: #161616;
+      --muted: #6a6a6a;
+      --hair: #ececec;
+      --bg: #ffffff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Jost', sans-serif;
+      font-weight: 300;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Header ─── */
+    header {
+      padding: 28px 0 0;
+    }
+
+    .logo-mark {
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      display: inline-flex;
+      align-items: baseline;
+    }
+
+    .logo-mark .dot {
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      background: var(--red);
+      border-radius: 50%;
+      margin: 0 0 14px 1px;
+      vertical-align: top;
+      position: relative;
+      top: -2px;
+    }
+
+    .logo-mark .sup {
+      font-size: 12px;
+      font-weight: 300;
+      margin-left: 4px;
+      color: var(--muted);
+    }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 80px 0 48px;
+      text-align: center;
+    }
+
+    .hero h1 {
+      font-weight: 200;
+      font-size: clamp(36px, 6vw, 56px);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 20px;
+    }
+
+    .hero .sub {
+      color: var(--muted);
+      font-size: clamp(16px, 2.5vw, 19px);
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    /* ─── Steps preview ─── */
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 28px;
+      padding: 24px 0 64px;
+      border-bottom: 1px solid var(--hair);
+    }
+
+    @media (min-width: 640px) {
+      .steps { grid-template-columns: repeat(3, 1fr); gap: 32px; }
+    }
+
+    .step {
+      text-align: center;
+    }
+
+    .step .num {
+      font-size: 32px;
+      font-weight: 200;
+      color: var(--red);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .step .label {
+      font-size: 15px;
+      color: var(--muted);
+    }
+
+    /* ─── Form ─── */
+    .form-section {
+      padding: 64px 0 48px;
+    }
+
+    .section-title {
+      font-weight: 200;
+      font-size: 28px;
+      letter-spacing: -0.01em;
+      margin-bottom: 8px;
+    }
+
+    .section-sub {
+      color: var(--muted);
+      margin-bottom: 32px;
+      font-size: 15px;
+    }
+
+    .field {
+      margin-bottom: 20px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+      color: var(--ink);
+    }
+
+    .field label .req {
+      color: var(--red);
+    }
+
+    .field label .opt {
+      color: var(--muted);
+      font-weight: 300;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .field input,
+    .field textarea {
+      width: 100%;
+      padding: 12px 14px;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 300;
+      color: var(--ink);
+      background: var(--bg);
+      border: 1px solid var(--hair);
+      border-radius: 6px;
+      transition: border-color 0.15s ease;
+    }
+
+    .field input:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: var(--red);
+    }
+
+    .field textarea {
+      min-height: 120px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .field input::placeholder,
+    .field textarea::placeholder {
+      color: #b8b8b8;
+      font-weight: 300;
+    }
+
+    /* ─── Buttons ─── */
+    .btn-primary {
+      display: inline-block;
+      background: var(--red);
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-family: inherit;
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      text-decoration: none;
+    }
+
+    .btn-primary:hover { background: var(--red-deep); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .btn-large {
+      font-size: 18px;
+      padding: 18px 40px;
+    }
+
+    .skip-link {
+      display: block;
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.15s ease;
+    }
+
+    .skip-link:hover { color: var(--red); }
+
+    .form-status {
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .form-status.error { color: var(--red); }
+
+    /* ─── Result section ─── */
+    .result-section {
+      padding: 80px 0 64px;
+      text-align: center;
+      border-top: 1px solid var(--hair);
+    }
+
+    .result-section[hidden] { display: none; }
+
+    .check {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--red);
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      margin-bottom: 24px;
+    }
+
+    .result-section h2 {
+      font-weight: 200;
+      font-size: 32px;
+      letter-spacing: -0.01em;
+      margin-bottom: 12px;
+    }
+
+    .session-code {
+      display: inline-block;
+      margin: 32px 0;
+      padding: 16px 28px;
+      border: 1px dashed var(--red);
+      border-radius: 8px;
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      color: var(--red);
+    }
+
+    .session-code-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .next-steps {
+      margin: 40px 0 0;
+      text-align: left;
+      max-width: 420px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .next-steps ol {
+      list-style: none;
+      counter-reset: steps;
+    }
+
+    .next-steps li {
+      counter-increment: steps;
+      padding: 12px 0 12px 36px;
+      position: relative;
+      color: var(--muted);
+      font-size: 15px;
+      border-bottom: 1px solid var(--hair);
+    }
+
+    .next-steps li:last-child { border-bottom: none; }
+
+    .next-steps li::before {
+      content: counter(steps);
+      position: absolute;
+      left: 0;
+      top: 12px;
+      font-weight: 500;
+      color: var(--red);
+      width: 24px;
+      text-align: center;
+    }
+
+    /* ─── Trust callout ─── */
+    .trust {
+      padding: 48px 0;
+      text-align: center;
+      border-top: 1px solid var(--hair);
+    }
+
+    .trust p {
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 520px;
+      margin: 0 auto;
+      line-height: 1.7;
+    }
+
+    /* ─── FAQ ─── */
+    .faq {
+      padding: 24px 0 48px;
+    }
+
+    .faq h3 {
+      font-weight: 200;
+      font-size: 24px;
+      letter-spacing: -0.01em;
+      margin-bottom: 24px;
+    }
+
+    .faq details {
+      border-top: 1px solid var(--hair);
+      padding: 16px 0;
+    }
+
+    .faq details:last-child {
+      border-bottom: 1px solid var(--hair);
+    }
+
+    .faq summary {
+      cursor: pointer;
+      font-weight: 500;
+      font-size: 15px;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .faq summary::-webkit-details-marker { display: none; }
+
+    .faq summary::after {
+      content: '+';
+      color: var(--red);
+      font-size: 20px;
+      font-weight: 200;
+      transition: transform 0.2s ease;
+    }
+
+    .faq details[open] summary::after {
+      content: '−';
+    }
+
+    .faq details p {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ─── Footer ─── */
+    footer {
+      padding: 48px 0;
+      text-align: center;
+      border-top: 1px solid var(--hair);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer .tagline {
+      margin-bottom: 12px;
+    }
+
+    footer a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    footer a:hover { color: var(--red); }
+
+    /* ─── Loading ─── */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Print styles ─── */
+    @media print {
+      .form-section, .skip-link, .btn-primary { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="container">
+      <a href="/" class="logo-mark" aria-label="iDezign home">
+        iDezign<span class="dot" aria-hidden="true"></span><span class="sup">^ai</span>
+      </a>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container">
+        <h1>Let&rsquo;s get you fixed up.</h1>
+        <p class="sub">One click. No install. Eric&rsquo;s at your screen in a few minutes.</p>
+      </div>
+    </section>
+
+    <!-- 3-step preview -->
+    <section class="container">
+      <div class="steps">
+        <div class="step">
+          <span class="num">1</span>
+          <span class="label">Tell Eric what&rsquo;s going on</span>
+        </div>
+        <div class="step">
+          <span class="num">2</span>
+          <span class="label">Click &ldquo;Connect with Eric&rdquo;</span>
+        </div>
+        <div class="step">
+          <span class="num">3</span>
+          <span class="label">Read Eric your ID and password</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Intake form -->
+    <section class="form-section" id="formSection">
+      <div class="container">
+        <h2 class="section-title">Tell Eric what&rsquo;s going on</h2>
+        <p class="section-sub">A heads-up means I can have answers ready when we connect.</p>
+
+        <form id="intakeForm" novalidate>
+          <div class="field">
+            <label for="name">Your name <span class="req">*</span></label>
+            <input type="text" id="name" name="name" required autocomplete="name" placeholder="Sarah Johnson">
+          </div>
+
+          <div class="field">
+            <label for="company">Company or organization <span class="opt">— optional</span></label>
+            <input type="text" id="company" name="company" autocomplete="organization" placeholder="Smith CPA Firm">
+          </div>
+
+          <div class="field">
+            <label for="contact">Best phone or email <span class="req">*</span></label>
+            <input type="text" id="contact" name="contact" required placeholder="530-555-1234  or  sarah@smithcpa.com">
+          </div>
+
+          <div class="field">
+            <label for="issue">What&rsquo;s going on? <span class="req">*</span></label>
+            <textarea id="issue" name="issue" required placeholder="Excel keeps crashing when I open the payroll file. Started this morning."></textarea>
+          </div>
+
+          <button type="submit" class="btn-primary" id="submitBtn">Continue to session</button>
+          <p class="form-status" id="formStatus"></p>
+
+          <a href="#" class="skip-link" id="skipLink">Already on the phone with Eric? Skip to download &rarr;</a>
+        </form>
+      </div>
+    </section>
+
+    <!-- Result (revealed after submit / skip) -->
+    <section class="result-section" id="resultSection" hidden>
+      <div class="container">
+        <div class="check" aria-hidden="true">&check;</div>
+        <h2 id="resultTitle">Got it &mdash; here&rsquo;s what to do next.</h2>
+
+        <div id="codeBlock">
+          <span class="session-code-label">Your session code</span>
+          <div class="session-code" id="sessionCodeDisplay">iDH-A4F2</div>
+          <p style="color: var(--muted); font-size: 13px; max-width: 360px; margin: 0 auto;">Mention this to Eric if he asks. He&rsquo;ll see the same code on his end.</p>
+        </div>
+
+        <p style="margin: 32px 0 16px;">
+          <a href="https://custom.teamviewer.com/idezignqs" class="btn-primary btn-large" download>
+            Download Connection Tool
+          </a>
+        </p>
+
+        <div class="next-steps">
+          <ol>
+            <li>Click the downloaded file to open it</li>
+            <li>Read Eric the <strong>ID</strong> and <strong>password</strong> shown in the window</li>
+            <li>Eric connects &mdash; that&rsquo;s it. Stay close in case he needs you.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trust callout -->
+    <section class="trust">
+      <div class="container">
+        <p>
+          Nothing installs on your computer. The connection tool runs once and leaves nothing behind when you close it. Eric can only see your screen while the window is open &mdash; close it any time to end the session.
+        </p>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="faq">
+      <div class="container">
+        <h3>Common questions</h3>
+
+        <details>
+          <summary>Will Eric see my private files?</summary>
+          <p>Eric will see whatever&rsquo;s on your screen &mdash; the same as if he were standing next to you. Close anything personal before connecting, and remember you can end the session any time by closing the window.</p>
+        </details>
+
+        <details>
+          <summary>My browser warned me about the download. Is it safe?</summary>
+          <p>Yes. The tool is TeamViewer QuickSupport with iDezign branding &mdash; the same software used by IT support shops worldwide. Some browsers warn about any downloaded .exe, but this one is signed and verified.</p>
+        </details>
+
+        <details>
+          <summary>How long does a session usually take?</summary>
+          <p>Most fixes take 5&ndash;15 minutes. Eric will tell you if it&rsquo;ll be longer before he starts.</p>
+        </details>
+
+        <details>
+          <summary>What if I&rsquo;m not in front of my computer?</summary>
+          <p>You need to be there to start the session &mdash; the tool only runs while you keep its window open. Once Eric&rsquo;s connected, you can step away if he doesn&rsquo;t need you (just don&rsquo;t close the window).</p>
+        </details>
+
+        <details>
+          <summary>What if the file won&rsquo;t open or I can&rsquo;t find it?</summary>
+          <p>Check your Downloads folder for &ldquo;iDezign Remote Support.exe.&rdquo; If your browser blocked the download, allow it. Still stuck? Call Eric directly at <a href="tel:5304106450" style="color: var(--red);">530-410-6450</a>.</p>
+        </details>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="container">
+      <p class="tagline">iDezign Technology &mdash; trusted IT support since 1997</p>
+      <p>
+        <a href="mailto:eric@idezign.com">eric@idezign.com</a>
+        &nbsp;&middot;&nbsp;
+        <a href="tel:5304106450">530&middot;410&middot;6450</a>
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const form = document.getElementById('intakeForm');
+      const submitBtn = document.getElementById('submitBtn');
+      const status = document.getElementById('formStatus');
+      const skipLink = document.getElementById('skipLink');
+      const formSection = document.getElementById('formSection');
+      const resultSection = document.getElementById('resultSection');
+      const sessionCodeDisplay = document.getElementById('sessionCodeDisplay');
+      const resultTitle = document.getElementById('resultTitle');
+      const codeBlock = document.getElementById('codeBlock');
+
+      async function submitIntake(payload, isSkip) {
+        try {
+          const res = await fetch('/api/help-intake', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) throw new Error('Server error');
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || 'Submission failed');
+          return data.sessionCode;
+        } catch (err) {
+          if (isSkip) {
+            // For phone-in skips, fail soft — just go to download
+            return null;
+          }
+          throw err;
+        }
+      }
+
+      function showResult(sessionCode, isSkip) {
+        if (sessionCode) {
+          sessionCodeDisplay.textContent = sessionCode;
+        } else {
+          // Skip with no backend success — hide the code section
+          codeBlock.hidden = true;
+        }
+        if (isSkip) {
+          resultTitle.textContent = 'Ready to download.';
+        }
+        formSection.hidden = true;
+        resultSection.hidden = false;
+        resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+
+        const name = form.name.value.trim();
+        const company = form.company.value.trim();
+        const contact = form.contact.value.trim();
+        const issue = form.issue.value.trim();
+
+        if (!name || !contact || !issue) {
+          status.textContent = 'Please fill in name, contact, and what’s going on.';
+          status.classList.add('error');
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Sending&hellip;';
+        status.textContent = '';
+        status.classList.remove('error');
+
+        try {
+          const code = await submitIntake({ name, company, contact, issue, skipped: false }, false);
+          showResult(code, false);
+        } catch (err) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Continue to session';
+          status.textContent = 'Hmm, something went wrong. Try again, or call Eric directly: 530-410-6450.';
+          status.classList.add('error');
+        }
+      });
+
+      skipLink.addEventListener('click', async function (e) {
+        e.preventDefault();
+        const code = await submitIntake({ skipped: true }, true);
+        showResult(code, true);
+      });
+    })();
+  </script>
+
+</body>
+</html>
