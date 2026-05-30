@@ -1,281 +1,283 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <link rel="icon" type="image/png" href="/logos/iD-white-transparent.png">
-  <link rel="apple-touch-icon" href="/logos/iD-white-transparent.png">
+<link rel="icon" type="image/png" href="/logos/iD-white-transparent.png">
+<link rel="apple-touch-icon" href="/logos/iD-white-transparent.png">
 
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>iDezign Toolkit — Downloads | iDezign.ai</title>
-<meta name="description" content="Download the iDezign Toolkit — a set of Windows PowerShell tools for diagnostics, cleanup, remediation, imaging, and user-data migration. iDezign Remote Support coming soon.">
+<meta name="description" content="Download the iDezign Toolkit — a set of Windows PowerShell tools for diagnostics, cleanup, remediation, imaging, and user-data migration. Plus iDezign Remote Support for one-click help sessions.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400;500&display=swap" rel="stylesheet">
 <style>
-  :root{
-    --bg:#ffffff;
-    --ink:#161616;
-    --muted:#6a6a6a;
-    --hair:#ececec;
-    --red:#A82828;
-    --red-deep:#8f1f1f;
-    --ease:cubic-bezier(.22,.61,.36,1);
-  }
-  *{margin:0;padding:0;box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  body{
-    font-family:'Jost',sans-serif;
-    background:var(--bg);
-    color:var(--ink);
-    font-weight:300;
-    line-height:1.6;
-    -webkit-font-smoothing:antialiased;
-    overflow-x:hidden;
-  }
-  a{color:inherit;text-decoration:none}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 40px}
-  header{
-    position:sticky;top:0;z-index:50;
-    background:rgba(255,255,255,.82);
-    backdrop-filter:saturate(180%) blur(14px);
-    border-bottom:1px solid var(--hair);
-  }
-  .nav{display:flex;align-items:center;justify-content:space-between;height:84px}
-  .nav .logo{height:90px;width:auto;display:block}
-  .nav nav{display:flex;gap:38px;align-items:center}
-  .nav nav a{
-    font-size:14px;letter-spacing:.04em;color:var(--muted);
-    position:relative;padding:4px 0;transition:color .3s var(--ease);
-  }
-  .nav nav a::after{
-    content:"";position:absolute;left:0;bottom:-2px;height:1px;width:0;
-    background:var(--red);transition:width .35s var(--ease);
-  }
-  .nav nav a:hover{color:var(--ink)}
-  .nav nav a:hover::after{width:100%}
-  .nav nav a.active{color:var(--ink)}
-  .nav nav a.active::after{width:100%}
-  .nav .cta{
-    border:1px solid var(--ink);color:var(--ink);
-    padding:10px 20px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;
-    transition:all .35s var(--ease);
-  }
-  .nav .cta:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
-  .nav .cta::after{display:none}
+:root{
+--bg:#ffffff;
+--ink:#161616;
+--muted:#6a6a6a;
+--hair:#ececec;
+--red:#A82828;
+--red-deep:#8f1f1f;
+--ease:cubic-bezier(.22,.61,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+font-family:'Jost',sans-serif;
+background:var(--bg);
+color:var(--ink);
+font-weight:300;
+line-height:1.6;
+-webkit-font-smoothing:antialiased;
+overflow-x:hidden;
+}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:1180px;margin:0 auto;padding:0 40px}
+header{
+position:sticky;top:0;z-index:50;
+background:rgba(255,255,255,.82);
+backdrop-filter:saturate(180%) blur(14px);
+border-bottom:1px solid var(--hair);
+}
+.nav{display:flex;align-items:center;justify-content:space-between;height:84px}
+.nav .logo{height:90px;width:auto;display:block}
+.nav nav{display:flex;gap:38px;align-items:center}
+.nav nav a{
+font-size:14px;letter-spacing:.04em;color:var(--muted);
+position:relative;padding:4px 0;transition:color .3s var(--ease);
+}
+.nav nav a::after{
+content:"";position:absolute;left:0;bottom:-2px;height:1px;width:0;
+background:var(--red);transition:width .35s var(--ease);
+}
+.nav nav a:hover{color:var(--ink)}
+.nav nav a:hover::after{width:100%}
+.nav nav a.active{color:var(--ink)}
+.nav nav a.active::after{width:100%}
+.nav .cta{
+border:1px solid var(--ink);color:var(--ink);
+padding:10px 20px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;
+transition:all .35s var(--ease);
+}
+.nav .cta:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
+.nav .cta::after{display:none}
 
-  /* page hero */
-  .phero{position:relative;padding:108px 0 56px;overflow:hidden}
-  .phero .caretghost{
-    position:absolute;right:-60px;top:20px;font-size:480px;line-height:1;
-    color:var(--red);opacity:.035;font-weight:200;pointer-events:none;user-select:none;
-  }
-  .crumb{
-    display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:.12em;
-    text-transform:uppercase;color:var(--muted);margin-bottom:26px;font-weight:400;
-  }
-  .crumb a{color:var(--muted);transition:color .3s var(--ease)}
-  .crumb a:hover{color:var(--red)}
-  .crumb span{color:#c4c4c4}
-  .eyebrow{
-    display:flex;align-items:center;gap:14px;
-    font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--red);
-    margin-bottom:26px;font-weight:400;
-  }
-  .eyebrow::before{content:"";width:34px;height:1px;background:var(--red)}
-  h1{
-    font-weight:200;font-size:clamp(38px,5.6vw,72px);line-height:1.05;
-    letter-spacing:-.02em;max-width:16ch;margin-bottom:28px;
-  }
-  h1 .accent{color:var(--red);font-weight:300}
-  .lede{
-    font-size:clamp(17px,1.7vw,21px);color:var(--muted);max-width:56ch;
-    font-weight:300;
-  }
+/* page hero */
+.phero{position:relative;padding:108px 0 56px;overflow:hidden}
+.phero .caretghost{
+position:absolute;right:-60px;top:20px;font-size:480px;line-height:1;
+color:var(--red);opacity:.035;font-weight:200;pointer-events:none;user-select:none;
+}
+.crumb{
+display:flex;align-items:center;gap:10px;font-size:12px;letter-spacing:.12em;
+text-transform:uppercase;color:var(--muted);margin-bottom:26px;font-weight:400;
+}
+.crumb a{color:var(--muted);transition:color .3s var(--ease)}
+.crumb a:hover{color:var(--red)}
+.crumb span{color:#c4c4c4}
+.eyebrow{
+display:flex;align-items:center;gap:14px;
+font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--red);
+margin-bottom:26px;font-weight:400;
+}
+.eyebrow::before{content:"";width:34px;height:1px;background:var(--red)}
+h1{
+font-weight:200;font-size:clamp(38px,5.6vw,72px);line-height:1.05;
+letter-spacing:-.02em;max-width:16ch;margin-bottom:28px;
+}
+h1 .accent{color:var(--red);font-weight:300}
+.lede{
+font-size:clamp(17px,1.7vw,21px);color:var(--muted);max-width:56ch;
+font-weight:300;
+}
 
-  /* tools grid */
-  .tools{padding:24px 0 100px}
-  .tgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:36px}
-  .tool{
-    border:1px solid var(--hair);padding:40px 38px 36px;display:flex;flex-direction:column;
-    transition:border-color .4s var(--ease),box-shadow .4s var(--ease),transform .4s var(--ease);
-    background:#fff;
-  }
-  .tool:hover{border-color:#dcdcdc;box-shadow:0 22px 60px -34px rgba(22,22,22,.28);transform:translateY(-3px)}
-  .tool .tick{width:30px;height:2px;background:var(--red);margin-bottom:22px;transition:width .4s var(--ease)}
-  .tool:hover .tick{width:54px}
-  .tool .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:12px}
-  .tool h2{font-weight:400;font-size:26px;letter-spacing:-.01em}
-  .badge{
-    font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:400;
-    padding:5px 11px;border-radius:2px;white-space:nowrap;
-  }
-  .badge.ver{background:rgba(168,40,40,.08);color:var(--red)}
-  .badge.soon{background:#f3f3f3;color:var(--muted)}
-  .tool p.desc{font-size:15.5px;color:var(--muted);font-weight:300;margin-bottom:24px}
-  .feats{list-style:none;margin:0 0 30px;padding:0;border-top:1px solid var(--hair)}
-  .feats li{
-    display:flex;gap:12px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--hair);
-    font-size:15px;color:var(--ink);font-weight:300;
-  }
-  .feats li .k{color:var(--red);font-weight:400;flex:0 0 auto;width:18px;text-align:center}
-  .feats li .t b{font-weight:400}
-  .feats li .t span{color:var(--muted);font-size:14px}
-  .tool .foot{margin-top:auto;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
-  .meta{font-size:13px;color:#9a9a9a;letter-spacing:.02em;font-weight:300}
-  .btn-primary{
-    background:var(--red);color:#fff;padding:15px 30px;font-size:15px;
-    letter-spacing:.03em;transition:all .35s var(--ease);display:inline-block;
-  }
-  .btn-primary:hover{background:var(--red-deep);transform:translateY(-2px);box-shadow:0 10px 30px -10px rgba(168,40,40,.5)}
-  .btn-ghost{
-    border:1px solid #d6d6d6;color:#9a9a9a;padding:15px 30px;font-size:15px;letter-spacing:.03em;
-    display:inline-block;cursor:not-allowed;
-  }
-  .tool.comingsoon{background:#fcfcfc}
-  .tvnote{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted);font-weight:300;margin-top:2px}
-  .tvnote .dot{width:7px;height:7px;border-radius:50%;background:#0a6cff;display:inline-block}
+/* tools grid */
+.tools{padding:24px 0 100px}
+.tgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:36px}
+.tool{
+border:1px solid var(--hair);padding:40px 38px 36px;display:flex;flex-direction:column;
+transition:border-color .4s var(--ease),box-shadow .4s var(--ease),transform .4s var(--ease);
+background:#fff;
+}
+.tool:hover{border-color:#dcdcdc;box-shadow:0 22px 60px -34px rgba(22,22,22,.28);transform:translateY(-3px)}
+.tool .tick{width:30px;height:2px;background:var(--red);margin-bottom:22px;transition:width .4s var(--ease)}
+.tool:hover .tick{width:54px}
+.tool .head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:12px}
+.tool h2{font-weight:400;font-size:26px;letter-spacing:-.01em}
+.badge{
+font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:400;
+padding:5px 11px;border-radius:2px;white-space:nowrap;
+}
+.badge.ver{background:rgba(168,40,40,.08);color:var(--red)}
+.badge.soon{background:#f3f3f3;color:var(--muted)}
+.tool p.desc{font-size:15.5px;color:var(--muted);font-weight:300;margin-bottom:24px}
+.feats{list-style:none;margin:0 0 30px;padding:0;border-top:1px solid var(--hair)}
+.feats li{
+display:flex;gap:12px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--hair);
+font-size:15px;color:var(--ink);font-weight:300;
+}
+.feats li .k{color:var(--red);font-weight:400;flex:0 0 auto;width:18px;text-align:center}
+.feats li .t b{font-weight:400}
+.feats li .t span{color:var(--muted);font-size:14px}
+.tool .foot{margin-top:auto;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.meta{font-size:13px;color:#9a9a9a;letter-spacing:.02em;font-weight:300}
+.btn-primary{
+background:var(--red);color:#fff;padding:15px 30px;font-size:15px;
+letter-spacing:.03em;transition:all .35s var(--ease);display:inline-block;
+}
+.btn-primary:hover{background:var(--red-deep);transform:translateY(-2px);box-shadow:0 10px 30px -10px rgba(168,40,40,.5)}
+.btn-ghost{
+border:1px solid #d6d6d6;color:#9a9a9a;padding:15px 30px;font-size:15px;letter-spacing:.03em;
+display:inline-block;cursor:not-allowed;
+}
+.tool.comingsoon{background:#fcfcfc}
+.tvnote{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--muted);font-weight:300;margin-top:2px}
+.tvnote .dot{width:7px;height:7px;border-radius:50%;background:#0a6cff;display:inline-block}
 
-  /* helper band */
-  .band{border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:60px 0}
-  .band .wrap{display:flex;align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap}
-  .band .big{font-size:clamp(22px,2.6vw,32px);font-weight:200;letter-spacing:-.01em;max-width:24ch}
-  .band .big b{font-weight:400;color:var(--red)}
-  .band a.link{font-size:15px;color:var(--muted);border-bottom:1px solid var(--hair);padding-bottom:3px;transition:all .3s var(--ease);white-space:nowrap}
-  .band a.link:hover{color:var(--ink);border-color:var(--red)}
+/* helper band */
+.band{border-top:1px solid var(--hair);border-bottom:1px solid var(--hair);padding:60px 0}
+.band .wrap{display:flex;align-items:center;justify-content:space-between;gap:40px;flex-wrap:wrap}
+.band .big{font-size:clamp(22px,2.6vw,32px);font-weight:200;letter-spacing:-.01em;max-width:24ch}
+.band .big b{font-weight:400;color:var(--red)}
+.band a.link{font-size:15px;color:var(--muted);border-bottom:1px solid var(--hair);padding-bottom:3px;transition:all .3s var(--ease);white-space:nowrap}
+.band a.link:hover{color:var(--ink);border-color:var(--red)}
 
-  footer{background:#0c0c0c;color:#fff;padding:84px 0 46px}
-  footer .top{display:flex;justify-content:space-between;gap:50px;flex-wrap:wrap;padding-bottom:54px;border-bottom:1px solid #242424}
-  footer .logo-foot{height:120px;width:auto;display:block;margin-bottom:18px}
-  footer .tag{color:#8a8a8a;font-size:14px;max-width:34ch;font-weight:300}
-  footer .cols{display:flex;gap:70px;flex-wrap:wrap}
-  footer .col h4{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--red);font-weight:400;margin-bottom:18px}
-  footer .col a,footer .col p{display:block;color:#cfcfcf;font-size:15px;margin-bottom:11px;font-weight:300;transition:color .3s var(--ease)}
-  footer .col a:hover{color:#fff}
-  footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding-top:28px;color:#6a6a6a;font-size:13px;letter-spacing:.03em}
+footer{background:#0c0c0c;color:#fff;padding:84px 0 46px}
+footer .top{display:flex;justify-content:space-between;gap:50px;flex-wrap:wrap;padding-bottom:54px;border-bottom:1px solid #242424}
+footer .logo-foot{height:120px;width:auto;display:block;margin-bottom:18px}
+footer .tag{color:#8a8a8a;font-size:14px;max-width:34ch;font-weight:300}
+footer .cols{display:flex;gap:70px;flex-wrap:wrap}
+footer .col h4{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--red);font-weight:400;margin-bottom:18px}
+footer .col a,footer .col p{display:block;color:#cfcfcf;font-size:15px;margin-bottom:11px;font-weight:300;transition:color .3s var(--ease)}
+footer .col a:hover{color:#fff}
+footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;padding-top:28px;color:#6a6a6a;font-size:13px;letter-spacing:.03em}
 
-  .reveal{opacity:0;transform:translateY(22px);animation:rise .9s var(--ease) forwards}
-  @keyframes rise{to{opacity:1;transform:none}}
-  .d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.31s}
-  .d4{animation-delay:.44s}.d5{animation-delay:.57s}
+.reveal{opacity:0;transform:translateY(22px);animation:rise .9s var(--ease) forwards}
+@keyframes rise{to{opacity:1;transform:none}}
+.d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.31s}
+.d4{animation-delay:.44s}.d5{animation-delay:.57s}
 
-  @media(max-width:780px){
-    .wrap{padding:0 24px}
-    .nav nav{display:none}
-    .tgrid{grid-template-columns:1fr;gap:28px}
-    .phero{padding:64px 0 36px}
-    .phero .caretghost{font-size:280px;right:-30px;opacity:.04}
-    .tool{padding:32px 26px 30px}
-    footer .top{flex-direction:column}
-  }
+@media(max-width:780px){
+.wrap{padding:0 24px}
+.nav nav{display:none}
+.tgrid{grid-template-columns:1fr;gap:28px}
+.phero{padding:64px 0 36px}
+.phero .caretghost{font-size:280px;right:-30px;opacity:.04}
+.tool{padding:32px 26px 30px}
+footer .top{flex-direction:column}
+}
 </style>
 </head>
 <body>
 <header>
-  <div class="wrap nav">
-    <a href="/"><img class="logo" src="/logos/iDezign-ai-logo-v2-transparent.png" alt="iDezign.ai — Technology to the Power of AI"></a>
-    <nav>
-      <a href="/#about">About</a>
-      <a href="/#services">Services</a>
-      <a href="/toolkit/" class="active">Toolkit</a>
-      <a href="/#contact">Contact</a>
-      <a href="/#contact" class="cta">Start a conversation</a>
-    </nav>
-  </div>
+<div class="wrap nav">
+<a href="/"><img class="logo" src="/logos/iDezign-ai-logo-v2-transparent.png" alt="iDezign.ai — Technology to the Power of AI"></a>
+<nav>
+<a href="/#about">About</a>
+<a href="/#services">Services</a>
+<a href="/toolkit/" class="active">Toolkit</a>
+<a href="/help/">Help</a>
+<a href="/#contact">Contact</a>
+<a href="/#contact" class="cta">Start a conversation</a>
+</nav>
+</div>
 </header>
 
 <section class="phero">
-  <div class="caretghost">^</div>
-  <div class="wrap">
-    <div class="crumb reveal d1"><a href="/">Home</a> <span>/</span> Toolkit</div>
-    <div class="eyebrow reveal d2">Downloads · Tools</div>
-    <h1 class="reveal d3">Tools I actually use, <span class="accent">free</span> to download.</h1>
-    <p class="lede reveal d4">The same utilities I run on real machines every week — packaged so you can grab them and go. Built for Windows, no install, nothing left behind.</p>
-  </div>
+<div class="caretghost">^</div>
+<div class="wrap">
+<div class="crumb reveal d1"><a href="/">Home</a> <span>/</span> Toolkit</div>
+<div class="eyebrow reveal d2">Downloads · Tools</div>
+<h1 class="reveal d3">Tools I actually use, <span class="accent">free</span> to download.</h1>
+<p class="lede reveal d4">The same utilities I run on real machines every week — packaged so you can grab them and go. Built for Windows, no install, nothing left behind.</p>
+</div>
 </section>
 
 <section class="tools">
-  <div class="wrap">
-    <div class="tgrid">
+<div class="wrap">
+<div class="tgrid">
 
-      <!-- iDezign Toolkit -->
-      <div class="tool reveal d2">
-        <div class="tick"></div>
-        <div class="head">
-          <h2>iDezign Toolkit</h2>
-          <span class="badge ver">v2.4</span>
-        </div>
-        <p class="desc">A single launcher for the PowerShell tools I lean on for diagnostics, cleanup, and migrations. Each tool runs in its own elevated window — self-staging, so it works straight off a USB stick.</p>
-        <ul class="feats">
-          <li><span class="k">→</span><span class="t"><b>Diagnostics</b> &nbsp;<span>— health check + HTML report</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Cleanup</b> &nbsp;<span>— maintenance + imaging prep</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Remediation</b> &nbsp;<span>— interactive issue fixer</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Reset to OOBE</b> &nbsp;<span>— sysprep for imaging</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Save PDF</b> &nbsp;<span>— latest report to a dated PDF</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Migrate</b> &nbsp;<span>— back up + move user data</span></span></li>
-        </ul>
-        <div class="foot">
-          <a href="/dist/iDezign-Toolkit.zip" class="btn-primary" download>Download .zip &nbsp;↓</a>
-          <span class="meta">Windows · PowerShell · ~180&nbsp;KB</span>
-        </div>
-      </div>
+<!-- iDezign Toolkit -->
+<div class="tool reveal d2">
+<div class="tick"></div>
+<div class="head">
+<h2>iDezign Toolkit</h2>
+<span class="badge ver">v2.4</span>
+</div>
+<p class="desc">A single launcher for the PowerShell tools I lean on for diagnostics, cleanup, and migrations. Each tool runs in its own elevated window — self-staging, so it works straight off a USB stick.</p>
+<ul class="feats">
+<li><span class="k">→</span><span class="t"><b>Diagnostics</b> &nbsp;<span>— health check + HTML report</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Cleanup</b> &nbsp;<span>— maintenance + imaging prep</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Remediation</b> &nbsp;<span>— interactive issue fixer</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Reset to OOBE</b> &nbsp;<span>— sysprep for imaging</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Save PDF</b> &nbsp;<span>— latest report to a dated PDF</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Migrate</b> &nbsp;<span>— back up + move user data</span></span></li>
+</ul>
+<div class="foot">
+<a href="/dist/iDezign-Toolkit.zip" class="btn-primary" download>Download .zip &nbsp;↓</a>
+<span class="meta">Windows · PowerShell · ~180&nbsp;KB</span>
+</div>
+</div>
 
-      <!-- iDezign Remote Support -->
-      <div class="tool comingsoon reveal d3">
-        <div class="tick"></div>
-        <div class="head">
-          <h2>iDezign Remote Support</h2>
-          <span class="badge soon">Coming soon</span>
-        </div>
-        <p class="desc">One click to start a secure remote session, so I can jump on your machine and sort things out without a trip. A branded, ready-to-run download — landing here shortly.</p>
-        <ul class="feats">
-          <li><span class="k">→</span><span class="t"><b>One-click connect</b> &nbsp;<span>— no setup on your end</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Secure session</b> &nbsp;<span>— you approve every connection</span></span></li>
-          <li><span class="k">→</span><span class="t"><b>Attended support</b> &nbsp;<span>— we walk through it together</span></span></li>
-        </ul>
-        <div class="foot">
-          <span class="btn-ghost">Coming soon</span>
-          <span class="tvnote"><span class="dot"></span>Built on TeamViewer</span>
-        </div>
-      </div>
+<!-- iDezign Remote Support -->
+<div class="tool reveal d3">
+<div class="tick"></div>
+<div class="head">
+<h2>iDezign Remote Support</h2>
+<span class="badge ver">Live</span>
+</div>
+<p class="desc">One click to start a secure remote session, so I can jump on your machine and sort things out without a trip. No install. Nothing left behind when you close it.</p>
+<ul class="feats">
+<li><span class="k">→</span><span class="t"><b>One-click connect</b> &nbsp;<span>— no setup on your end</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Secure session</b> &nbsp;<span>— you approve every connection</span></span></li>
+<li><span class="k">→</span><span class="t"><b>Attended support</b> &nbsp;<span>— we walk through it together</span></span></li>
+</ul>
+<div class="foot">
+<a href="/help/" class="btn-primary">Start a session &nbsp;→</a>
+<span class="tvnote"><span class="dot"></span>Built on TeamViewer</span>
+</div>
+</div>
 
-    </div>
-  </div>
+</div>
+</div>
 </section>
 
 <section class="band">
-  <div class="wrap">
-    <div class="big">Need something the toolkit doesn't cover? <b>I build custom scripts</b> for the work you'd rather not do twice.</div>
-    <a class="link" href="/#contact">Start a conversation →</a>
-  </div>
+<div class="wrap">
+<div class="big">Need something the toolkit doesn't cover? <b>I build custom scripts</b> for the work you'd rather not do twice.</div>
+<a class="link" href="/#contact">Start a conversation →</a>
+</div>
 </section>
 
 <footer id="contact">
-  <div class="wrap">
-    <div class="top">
-      <div>
-        <img class="logo-foot" src="/logos/iDezign-ai-logo-v2-reverse-transparent.png" alt="iDezign.ai">
-        <p class="tag">Technology to the power of AI. Practical artificial intelligence for real-world business, based in Redding, California.</p>
-      </div>
-      <div class="cols">
-        <div class="col">
-          <h4>Contact</h4>
-          <a href="mailto:eric@idezign.com">eric@idezign.com</a>
-          <a href="tel:5304106450">530&nbsp;410&nbsp;6450</a>
-        </div>
-        <div class="col">
-          <h4>Explore</h4>
-          <a href="/#about">About</a>
-          <a href="/#services">Services</a>
-          <a href="/toolkit/">Toolkit</a>
-          <a href="https://idezign.com">iDezign Tech ↗</a>
-        </div>
-      </div>
-    </div>
-    <div class="bottom">
-      <span>© 2026 iDezign.ai · Eric Morton</span>
-      <span>Technology to the Power of AI</span>
-    </div>
-  </div>
+<div class="wrap">
+<div class="top">
+<div>
+<img class="logo-foot" src="/logos/iDezign-ai-logo-v2-reverse-transparent.png" alt="iDezign.ai">
+<p class="tag">Technology to the power of AI. Practical artificial intelligence for real-world business, based in Redding, California.</p>
+</div>
+<div class="cols">
+<div class="col">
+<h4>Contact</h4>
+<a href="mailto:eric@idezign.com">eric@idezign.com</a>
+<a href="tel:5304106450">530&nbsp;410&nbsp;6450</a>
+</div>
+<div class="col">
+<h4>Explore</h4>
+<a href="/#about">About</a>
+<a href="/#services">Services</a>
+<a href="/toolkit/">Toolkit</a>
+<a href="/help/">Help</a>
+<a href="https://idezign.com">iDezign Tech ↗</a>
+</div>
+</div>
+</div>
+<div class="bottom">
+<span>© 2026 iDezign.ai · Eric Morton</span>
+<span>Technology to the Power of AI</span>
+</div>
+</div>
 </footer>
 </body>
 </html>
