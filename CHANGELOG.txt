@@ -4,6 +4,19 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.6  - 2026-06-02  - All-profiles cleanup
+  * Cleanup script Phase 2 now iterates Win32_UserProfile and cleans Temp,
+    Edge & Chrome caches, Recent items, thumbnail/icon caches and INetCache
+    for EVERY real user profile on the machine - not just the current admin.
+  * Profiles whose user is currently logged in are skipped automatically
+    (active processes hold cache files open, so cleaning would error out).
+    The skipped user is announced before Phase 2 starts so the tech can
+    decide whether to log them off and re-run.
+  * Profile scope banner: "N user profile(s) found - X idle (will clean),
+    Y logged-in (will skip)" prints once before Phase 2 begins.
+  * Real-world impact: on shared/multi-user shop machines this typically
+    finds 2-10x more reclaimable space than the v2.5 single-user pass.
+
 v2.5  - 2026-06-01  - Imaging-prep batch + driver updates + staging fix
   * FIX: version banner no longer reports "No iDezign_Versions.json found" on the
     staged re-launch - the self-stage helper (Invoke-iDezignSelfStage) now copies
