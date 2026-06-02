@@ -686,8 +686,8 @@ function Invoke-RebootChoice {
     Write-Host "  ============================================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Pick when:" -ForegroundColor White
-    Write-Host "    [N] Now    - reboot in $CountdownSeconds seconds" -ForegroundColor White
-    Write-Host "    [L] Later  - skip reboot, you'll do it manually" -ForegroundColor White
+    Write-Host "    [Y] Yes - reboot now (in $CountdownSeconds seconds)" -ForegroundColor White
+    Write-Host "    [N] No  - skip reboot, you'll do it manually" -ForegroundColor White
     Write-Host ""
     if ($DeferMessage) {
         Write-Host "  If you pick LATER:" -ForegroundColor DarkGray
@@ -695,12 +695,12 @@ function Invoke-RebootChoice {
         Write-Host ""
     }
 
-    $choice = Read-Host "  Reboot NOW or LATER? (N/L)  [default L = safer]"
+    $choice = Read-Host "  Reboot now? (Y/N)  [default N = safer]"
 
-    # Default to LATER if no input - safer than surprise reboot
-    if ([string]::IsNullOrWhiteSpace($choice)) { $choice = 'L' }
+    # Default to NO/defer if no input - safer than surprise reboot
+    if ([string]::IsNullOrWhiteSpace($choice)) { $choice = 'N' }
 
-    if ($choice -notmatch '^[Nn]') {
+    if ($choice -notmatch '^[Yy]') {
         Write-Host "  Reboot deferred. Remember to reboot manually when convenient." -ForegroundColor Yellow
         return $false
     }
@@ -793,9 +793,11 @@ function Invoke-iDezignSelfStage {
         return @{ NeedsRestage = $false; StagedPath = $StagedPath }
     }
 
-    $scriptDir = Split-Path $ScriptPath -Parent
-    $srcModule = Join-Path $scriptDir 'iDezign_Common.psm1'
-    $dstModule = Join-Path $StagingDir 'iDezign_Common.psm1'
+    $scriptDir   = Split-Path $ScriptPath -Parent
+    $srcModule   = Join-Path $scriptDir 'iDezign_Common.psm1'
+    $dstModule   = Join-Path $StagingDir 'iDezign_Common.psm1'
+    $srcManifest = Join-Path $scriptDir 'iDezign_Versions.json'
+    $dstManifest = Join-Path $StagingDir 'iDezign_Versions.json'
 
     # Same-path case: launched from staging dir directly.  Nothing to compare
     # against (we'd need to know where the original source came from).  Just
@@ -840,6 +842,26 @@ function Invoke-iDezignSelfStage {
         }
     }
 
+    # Manifest check - the version banner reads iDezign_Versions.json from the
+    # run directory. If it isn't staged alongside the script, the re-launched
+    # staged copy reports "No iDezign_Versions.json found". Re-stage if the
+    # manifest is missing from the staging dir or newer at the source.
+    if (Test-Path -LiteralPath $srcManifest) {
+        if (-not (Test-Path -LiteralPath $dstManifest)) {
+            $needsStage = $true
+            if (-not $reason) { $reason = 'manifest not yet staged' }
+        } else {
+            try {
+                $jSrc = (Get-Item -LiteralPath $srcManifest).LastWriteTime
+                $jDst = (Get-Item -LiteralPath $dstManifest).LastWriteTime
+                if ($jSrc -gt $jDst) {
+                    $needsStage = $true
+                    if (-not $reason) { $reason = "manifest newer ($($jSrc.ToString('yyyy-MM-dd HH:mm')) > staged $($jDst.ToString('yyyy-MM-dd HH:mm')))" }
+                }
+            } catch { }
+        }
+    }
+
     if (-not $needsStage) {
         # Script and module are both up to date, OR launched-from differs only
         # in path but content is current.  Just continue running from wherever
@@ -866,6 +888,12 @@ function Invoke-iDezignSelfStage {
         # rather than falling back to "module not found".
         if (Test-Path -LiteralPath $srcModule) {
             Copy-Item -Path $srcModule -Destination $dstModule -Force -ErrorAction Stop
+        }
+
+        # Stage the version manifest too so the staged copy's version banner
+        # can find iDezign_Versions.json (otherwise it prints "no JSON found").
+        if (Test-Path -LiteralPath $srcManifest) {
+            Copy-Item -Path $srcManifest -Destination $dstManifest -Force -ErrorAction Stop
         }
     } catch {
         return @{

@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped whenever the HTML report format changes.
 # Visible in the HTML report header so we can verify deployed version at a glance.
-$ScriptVersion = '2026.05.19-migrate-svc-net-sec'
+$ScriptVersion = '2026.06.01-v2.5-driver-updates'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -280,11 +280,23 @@ try {
     $secureBoot = $null
     try { $secureBoot = Confirm-SecureBootUEFI -ErrorAction Stop } catch { $secureBoot = $false }
 
+    # Friendly Windows feature-update label (e.g. 23H2), when present
+    $winDisplayVer = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' -ErrorAction SilentlyContinue).DisplayVersion
+    $osLine = if ($winDisplayVer) {
+        "$($os.Caption) $winDisplayVer ($($os.Version) build $($os.BuildNumber))"
+    } else {
+        "$($os.Caption) ($($os.Version) build $($os.BuildNumber))"
+    }
+    # On Dell hardware the BIOS serial IS the Service Tag - label it so it's findable
+    $isDell  = "$($cs.Manufacturer)" -match 'Dell'
+    $tagLabel = if ($isDell) { "Service Tag     : $($bios.SerialNumber)  (Dell Service Tag)" }
+                else          { "Serial          : $($bios.SerialNumber)" }
+
     $sysDetails = @(
-        "OS              : $($os.Caption) ($($os.Version) build $($os.BuildNumber))"
+        "OS              : $osLine"
         "Manufacturer    : $($cs.Manufacturer)"
         "Model           : $($cs.Model)"
-        "Serial          : $($bios.SerialNumber)"
+        $tagLabel
         "BIOS version    : $($bios.SMBIOSBIOSVersion) (release $(if($biosAgeDays){"$biosAgeDays days old"}else{'unknown'}))"
         "Install date    : $($installDate.ToString('yyyy-MM-dd')) (Age: $installAgeStr)"
         "Last boot       : $($os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm'))"
@@ -1888,6 +1900,106 @@ try {
     Get-ChildItem $SnapshotDir -Filter 'Snapshot_*.json' | Sort-Object LastWriteTime -Descending |
         Select-Object -Skip 10 | Remove-Item -Force -ErrorAction SilentlyContinue
 } catch { }
+
+#endregion
+
+#region --- Driver updates (Dell / Intel) ------------------------------------
+# Detects pending Dell + Intel driver/firmware updates and OFFERS to install.
+# Dell path uses Dell Command | Update (dcu-cli); if it's missing we install it
+# first (per Eric's choice). Intel path reports the Intel Driver & Support
+# Assistant presence (DSA has no reliable silent CLI, so we surface + point to it).
+# This section is interactive by design - it can change the machine if you say yes.
+
+Write-Section "Driver updates (Dell / Intel)"
+
+$drvDetails = @()
+$drvIssues  = @()
+$drvVerdict = 'OK'
+
+try {
+    $mfr = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).Manufacturer
+} catch { $mfr = '' }
+
+# ----- Dell Command | Update -------------------------------------------------
+if ("$mfr" -match 'Dell') {
+    $dcuCandidates = @(
+        'C:\Program Files\Dell\CommandUpdate\dcu-cli.exe',
+        'C:\Program Files (x86)\Dell\CommandUpdate\dcu-cli.exe'
+    )
+    $dcu = $dcuCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $dcu) {
+        Write-Host "  Dell Command | Update not found - installing (per config)..." -ForegroundColor DarkGray
+        $installed = $false
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            try {
+                Start-Process winget -ArgumentList @(
+                    'install','--id','Dell.CommandUpdate.Universal','-e',
+                    '--silent','--accept-package-agreements','--accept-source-agreements'
+                ) -Wait -NoNewWindow -ErrorAction Stop
+                $installed = $true
+            } catch {
+                $drvDetails += New-Detail "Dell Command | Update auto-install via winget failed: $($_.Exception.Message)" 'warn'
+            }
+        } else {
+            $drvDetails += New-Detail "winget not available - cannot auto-install Dell Command | Update. Install it manually from dell.com/support." 'warn'
+        }
+        if ($installed) { $dcu = $dcuCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+    }
+
+    if ($dcu) {
+        Write-Host "  Scanning for Dell updates (this can take a minute)..." -ForegroundColor DarkGray
+        try {
+            $scanOut = & $dcu /scan 2>&1 | Out-String
+            $scanRc  = $LASTEXITCODE
+            # dcu-cli: rc 0 = updates found/applied OK, rc 500 = no updates, others = error
+            if ($scanRc -eq 500 -or $scanOut -match 'No updates') {
+                $drvDetails += New-Detail "Dell: no applicable updates - firmware/drivers are current." 'pass'
+            } elseif ($scanRc -eq 0) {
+                $drvVerdict = 'ATTENTION'
+                $drvDetails += New-Detail "Dell: updates are available (Dell Command | Update scan)." 'warn'
+                foreach ($ln in ($scanOut -split "`r?`n" | Where-Object { $_ -match '^\s*-|update|driver|firmware|BIOS' } | Select-Object -First 25)) {
+                    if ($ln.Trim()) { $drvDetails += New-Detail ("  " + $ln.Trim()) 'info' }
+                }
+                $drvIssues += "Dell driver/firmware updates available"
+
+                Write-Host ""
+                $applyAns = Read-Host "  Apply the available Dell updates now? (Y/N)"
+                if ($applyAns -match '^(y|yes)$') {
+                    Write-Host "  Applying Dell updates (reboot suppressed - reboot manually after)..." -ForegroundColor DarkGray
+                    $applyOut = & $dcu /applyUpdates -reboot=disable 2>&1 | Out-String
+                    $drvDetails += New-Detail "Dell updates applied (reboot suppressed). Reboot to complete." 'info'
+                    $drvDetails += New-Detail ("  dcu-cli applyUpdates rc=$LASTEXITCODE") 'info'
+                } else {
+                    $drvDetails += New-Detail "Dell updates available but NOT applied (you chose No)." 'warn'
+                }
+            } else {
+                $drvDetails += New-Detail "Dell Command | Update scan returned rc=$scanRc. Check Dell logs." 'warn'
+            }
+        } catch {
+            $drvDetails += New-Detail "Dell scan error: $($_.Exception.Message)" 'warn'
+        }
+    }
+} else {
+    $drvDetails += New-Detail "Not Dell hardware (mfr: $mfr) - skipping Dell Command | Update." 'info'
+}
+
+# ----- Intel Driver & Support Assistant --------------------------------------
+$dsaPaths = @(
+    'C:\Program Files\Intel\Driver and Support Assistant\DSAService.exe',
+    'C:\Program Files (x86)\Intel\Driver and Support Assistant\DSAService.exe'
+)
+$dsa = $dsaPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($dsa) {
+    $drvDetails += New-Detail "Intel Driver & Support Assistant is installed - open it to apply Intel driver updates (no reliable silent CLI)." 'info'
+} else {
+    $drvDetails += New-Detail "Intel DSA not installed - get it at intel.com/dsa if Intel driver checks are wanted." 'info'
+}
+
+$drvHeadline = if ($drvVerdict -eq 'OK') { 'Drivers current / nothing pending' } else { 'Driver updates available' }
+Add-Finding -Section "Driver updates (Dell/Intel)" -Verdict $drvVerdict `
+            -Headline $drvHeadline `
+            -Details $drvDetails -Issues $drvIssues
 
 #endregion
 
