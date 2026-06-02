@@ -4,6 +4,22 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.5  - 2026-06-01  - Imaging-prep batch + driver updates + staging fix
+  * FIX: version banner no longer reports "No iDezign_Versions.json found" on the
+    staged re-launch - the self-stage helper (Invoke-iDezignSelfStage) now copies
+    the manifest alongside the script + module. Fixes every self-staging tool.
+  * Reboot prompt changed from (N/L) to (Y/N) in the shared Invoke-RebootChoice
+    helper ([Y]=now, [N]=later, default N).
+  * Cleanup: shows Windows version (incl. feature-update label) right after the
+    activation pre-flight.
+  * Cleanup: new always-run Phase 2c imaging-prep - disable Windows notifications
+    + suggestion nags; set network adapters to DHCP (records any static IP/gateway/
+    DNS first); remove Microsoft Teams (consumer + new work/school + machine-wide,
+    unprompted); turn on the Chrome bookmark bar + seed an iDezign.ai bookmark.
+  * Diagnostics: OS line now includes the friendly feature-version (e.g. 23H2);
+    Dell BIOS serial labeled "Service Tag"; new Dell/Intel driver-update section
+    that auto-installs Dell Command | Update if missing, scans, and offers to apply.
+
 v2.4  - 2026-05-26  - Migrate tool (user-data migration)
   * New menu item "Migrate" (item 6): backs up Desktop / Downloads / Documents /
     Pictures + Chrome bookmarks to a timestamped Backup_<stamp> folder, reports
