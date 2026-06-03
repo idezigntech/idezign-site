@@ -9,7 +9,6 @@
     "iDezign_Remediation.ps1": "2026.05.25-feedback-svcfilter",
     "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
     "iDezign_Toolkit_GUI.ps1": "2026.05.26-gui-v2.4-migrate",
-    "iDezign_Menu.ps1": "2026.05.25-menu-v1-manifest",
     "iDezign_SavePDF.ps1": "2026.05.25-savepdf-v1",
     "iDezign_Migration_Utility.ps1": "2026.05.26-migrate-v1"
   },
