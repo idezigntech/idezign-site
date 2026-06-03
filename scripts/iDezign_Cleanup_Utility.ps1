@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.06.01-v2.5-imaging-prep'
+$ScriptVersion = '2026.06.02-allprofiles'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -2132,11 +2132,88 @@ function Remove-PathSafe {
     }
 }
 
+# --- All-profiles cleanup helpers (v2.6) -------------------------------------
+# Phase 2 historically used $env:LOCALAPPDATA / $env:APPDATA which resolve to
+# the currently-running admin only. On multi-user machines that misses the
+# bulk of the bloat (other users' Edge/Chrome caches, temp, thumbcaches).
+# These helpers enumerate every real user profile via Win32_UserProfile and
+# clean the SAME relative paths under each LocalPath. Profiles whose user is
+# currently logged in are skipped (their cache files are locked).
+function Get-CleanableProfiles {
+    # Which users have an active session right now? Skip those.
+    $activeUsers = @()
+    try {
+        $quserOut = & quser 2>$null
+        if ($quserOut) {
+            $activeUsers = $quserOut |
+                Select-Object -Skip 1 |
+                ForEach-Object {
+                    # quser line: ">USERNAME    sessionname  ID  STATE  ..."
+                    $line = $_.Trim() -replace '\s{2,}', '|'
+                    (($line -split '\|')[0] -replace '^>','').Trim()
+                } | Where-Object { $_ }
+        }
+    } catch { }
+
+    Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+        Where-Object {
+            -not $_.Special -and
+            $_.LocalPath -like 'C:\Users\*' -and
+            $_.LocalPath -notlike '*\Public' -and
+            $_.LocalPath -notlike '*\Default*' -and
+            (Test-Path -LiteralPath $_.LocalPath)
+        } |
+        ForEach-Object {
+            $userName = Split-Path -Leaf $_.LocalPath
+            [PSCustomObject]@{
+                LocalPath  = $_.LocalPath
+                UserName   = $userName
+                SID        = $_.SID
+                IsLoggedIn = ($activeUsers -contains $userName)
+            }
+        }
+}
+
+# Run Remove-PathSafe against an AppData-relative path on every cleanable
+# profile. Caches the profile list so we only enumerate once per phase.
+function Remove-PathSafeAllProfiles {
+    param(
+        [Parameter(Mandatory)] [string] $RelativePath  # e.g. 'AppData\Local\Temp'
+    )
+    if (-not $script:CleanableProfiles) {
+        $script:CleanableProfiles = @(Get-CleanableProfiles)
+    }
+    foreach ($p in $script:CleanableProfiles) {
+        if ($p.IsLoggedIn) {
+            Write-Host "  skipped : $($p.UserName)\$RelativePath  (user is logged in)" -ForegroundColor DarkYellow
+            continue
+        }
+        $full = Join-Path $p.LocalPath $RelativePath
+        Remove-PathSafe $full
+    }
+}
+
+# Announce the profile scope once before Phase 2 starts so the tech can see
+# how many profiles will get cleaned (and how many are being skipped).
+$script:CleanableProfiles = @(Get-CleanableProfiles)
+$totalP  = $script:CleanableProfiles.Count
+$activeP = @($script:CleanableProfiles | Where-Object IsLoggedIn).Count
+$idleP   = $totalP - $activeP
+Write-Host ""
+Write-Host "  Profile scope: $totalP user profile(s) found - $idleP idle (will clean), $activeP logged-in (will skip)." -ForegroundColor Cyan
+if ($activeP -gt 0) {
+    ($script:CleanableProfiles | Where-Object IsLoggedIn) | ForEach-Object {
+        Write-Host "    skipping: $($_.UserName)" -ForegroundColor DarkYellow
+    }
+}
+
 Write-Host "`n[Phase 2 - 1/8] Cleaning temp folders..." -ForegroundColor Green
 Remove-PathSafe "$env:TEMP"
 Remove-PathSafe "$env:LOCALAPPDATA\Temp"
 Remove-PathSafe "C:\Windows\Temp"
 Remove-PathSafe "C:\Windows\Prefetch"
+Write-Host "  - All-profiles AppData\Local\Temp ..." -ForegroundColor DarkGray
+Remove-PathSafeAllProfiles 'AppData\Local\Temp'
 
 Write-Host "`n[Phase 2 - 2/8] Clearing Windows Update download cache..." -ForegroundColor Green
 Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
@@ -2154,10 +2231,22 @@ $browserCachePaths = @(
     "$env:APPDATA\Mozilla\Firefox\Profiles"
 )
 foreach ($p in $browserCachePaths) { Remove-PathSafe $p }
+Write-Host "  - All-profiles Edge / Chrome caches ..." -ForegroundColor DarkGray
+$browserRelPaths = @(
+    'AppData\Local\Microsoft\Edge\User Data\Default\Cache',
+    'AppData\Local\Microsoft\Edge\User Data\Default\Code Cache',
+    'AppData\Local\Google\Chrome\User Data\Default\Cache',
+    'AppData\Local\Google\Chrome\User Data\Default\Code Cache'
+)
+foreach ($r in $browserRelPaths) { Remove-PathSafeAllProfiles $r }
 
 Write-Host "`n[Phase 2 - 4/8] Recent items + thumbnail cache..." -ForegroundColor Green
 Remove-PathSafe "$env:APPDATA\Microsoft\Windows\Recent"
 Remove-PathSafe "$env:LOCALAPPDATA\Microsoft\Windows\Explorer"
+Write-Host "  - All-profiles Recent + thumbnail/icon caches ..." -ForegroundColor DarkGray
+Remove-PathSafeAllProfiles 'AppData\Roaming\Microsoft\Windows\Recent'
+Remove-PathSafeAllProfiles 'AppData\Local\Microsoft\Windows\Explorer'
+Remove-PathSafeAllProfiles 'AppData\Local\Microsoft\Windows\INetCache'
 
 Write-Host "`n[Phase 2 - 5/8] Removing Windows.old (previous Windows install)..." -ForegroundColor Green
 if (Test-Path "C:\Windows.old") {
