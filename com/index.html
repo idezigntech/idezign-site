@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" href="/logos/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/logos/apple-touch-icon.png">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iDezign.com — The Hardware Side of Things</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  /* dark scheme — same grades as the idezign.ai footer */
+  --bg:#0c0c0c;
+  --ink:#f2f2f2;
+  --muted:#8a8a8a;
+  --hair:#242424;
+  --red:#A82828;
+  --red-deep:#8f1f1f;
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow:hidden;background:var(--bg)}
+body{
+  font-family:'Jost',sans-serif;color:var(--ink);font-weight:300;
+  -webkit-font-smoothing:antialiased;
+}
+#caretghost{
+  position:fixed;right:-60px;top:20px;font-size:560px;line-height:1;
+  color:var(--red);opacity:.08;font-weight:200;pointer-events:none;
+  user-select:none;z-index:0;
+}
+#netsvg{position:fixed;inset:0;width:100%;height:100%;z-index:2}
+#mast{
+  position:fixed;top:34px;left:50%;transform:translateX(-50%);
+  z-index:5;text-align:center;pointer-events:none;
+}
+#mast .eyebrow{
+  font-size:12px;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--red);font-weight:400;margin-bottom:14px;
+}
+.logorow{display:flex;align-items:flex-start;justify-content:center;gap:3px}
+.logorow img{height:46px;width:auto;display:block}
+.logorow sup{
+  font-family:'Jost',sans-serif;font-size:14px;font-weight:400;
+  color:var(--red);margin-top:2px;letter-spacing:0;
+}
+#wm-fallback{display:none}
+.wordmark{
+  font-size:34px;font-weight:400;letter-spacing:-.02em;color:var(--ink);
+  display:inline-block;line-height:1;
+}
+.wordmark .imark{position:relative;display:inline-block}
+.wordmark .imark .dot{
+  position:absolute;top:.06em;left:50%;transform:translateX(-50%);
+  width:.14em;height:.14em;border-radius:50%;background:var(--red);
+}
+.wordmark sup{
+  font-size:.42em;font-weight:400;color:var(--red);
+  vertical-align:super;letter-spacing:0;margin-left:.06em;
+}
+#mast .route{
+  margin-top:12px;font-size:13px;letter-spacing:.04em;color:var(--muted);
+}
+#mast .route b{font-weight:400;color:var(--ink)}
+#stage{
+  position:fixed;inset:0;z-index:4;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  pointer-events:none;text-align:center;padding:0 24px;
+}
+#tagline{
+  font-weight:200;font-size:clamp(24px,3.8vw,48px);line-height:1.05;
+  letter-spacing:-.02em;min-height:1.2em;max-width:24ch;
+}
+#tagline .caret{
+  display:inline-block;width:.5em;height:1em;background:var(--red);
+  vertical-align:text-bottom;margin-left:4px;
+  animation:blink .8s steps(1) infinite;
+}
+@keyframes blink{50%{opacity:0}}
+#loading{
+  margin-top:26px;font-size:12px;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--red);font-weight:400;
+  opacity:0;transition:opacity .5s var(--ease);
+  display:flex;align-items:center;gap:14px;
+}
+#loading::before{content:"";width:34px;height:1px;background:var(--red)}
+#loading::after{content:"";width:34px;height:1px;background:var(--red)}
+#loadbar{
+  margin-top:16px;width:min(380px,70vw);height:2px;background:var(--hair);
+  opacity:0;transition:opacity .5s var(--ease);overflow:hidden;
+}
+#loadbar .fill{height:100%;width:0%;background:var(--red)}
+#enter{
+  margin-top:32px;pointer-events:auto;
+  opacity:0;transform:translateY(12px);
+  transition:opacity .7s var(--ease),transform .7s var(--ease);
+  visibility:hidden;
+}
+#enter.show{opacity:1;transform:translateY(0);visibility:visible}
+#enter a{
+  display:inline-block;text-decoration:none;
+  background:var(--red);color:#fff;padding:15px 30px;font-size:15px;
+  letter-spacing:.06em;text-transform:uppercase;font-weight:400;
+  transition:all .35s var(--ease);
+}
+#enter a:hover{
+  background:var(--red-deep);transform:translateY(-2px);
+  box-shadow:0 10px 30px -10px rgba(168,40,40,.5);
+}
+#enter .sub{
+  margin-top:14px;font-size:13px;letter-spacing:.04em;color:var(--muted);
+}
+#footer{
+  position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+  z-index:5;font-size:12px;letter-spacing:.04em;color:var(--muted);
+  pointer-events:none;text-align:center;white-space:nowrap;
+}
+#footer b{font-weight:400;color:var(--ink)}
+.gear{opacity:0;transition:opacity .45s var(--ease)}
+.gear.on{opacity:1}
+.cable{fill:none;stroke:#6f6f6f;stroke-width:1.6;stroke-linecap:round}
+.lbl{
+  font-family:'Jost',sans-serif;font-size:10.5px;letter-spacing:.2em;
+  text-transform:uppercase;fill:var(--muted);font-weight:400;text-anchor:middle;
+}
+.led{fill:var(--red)}
+.led.blink{animation:ledblink 1.6s infinite}
+@keyframes ledblink{0%,100%{opacity:1}50%{opacity:.15}}
+.wifi{fill:none;stroke:var(--red);stroke-width:1.4;stroke-linecap:round;opacity:0}
+.wifi.on{animation:wifipulse 2.4s infinite}
+@keyframes wifipulse{0%{opacity:.15}50%{opacity:.85}100%{opacity:.15}}
+</style>
+</head>
+<body>
+  <div id="caretghost">^</div>
+
+  <svg id="netsvg" viewBox="0 0 1280 800" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+    <g stroke="#f2f2f2" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <g id="cloud" class="gear">
+        <path d="M95,135 q-32,0 -32,-26 q0,-26 30,-26 q6,-30 44,-30 q36,0 46,26 q32,-6 32,26 q0,30 -34,30 z"/>
+        <text class="lbl" x="140" y="160" stroke="none">internet</text>
+      </g>
+      <path id="c1" class="cable" d="M140,160 C140,205 140,240 140,283"/>
+      <g id="modem" class="gear">
+        <rect x="122" y="285" width="36" height="70" rx="3"/>
+        <circle class="led" cx="140" cy="300" r="2.4" stroke="none"/>
+        <circle class="led blink" cx="140" cy="313" r="2.4" stroke="none"/>
+        <circle cx="140" cy="326" r="2.4"/>
+        <line x1="130" y1="343" x2="150" y2="343"/>
+        <text class="lbl" x="140" y="376" stroke="none">modem</text>
+      </g>
+      <path id="c2" class="cable" d="M158,330 C230,350 270,395 300,432"/>
+      <g id="router" class="gear">
+        <rect x="295" y="430" width="92" height="34" rx="3"/>
+        <line x1="318" y1="430" x2="311" y2="404"/>
+        <line x1="364" y1="430" x2="371" y2="404"/>
+        <circle class="led blink" cx="312" cy="447" r="2.4" stroke="none"/>
+        <circle class="led" cx="326" cy="447" r="2.4" stroke="none"/>
+        <circle cx="340" cy="447" r="2.4"/>
+        <circle cx="354" cy="447" r="2.4"/>
+        <text class="lbl" x="341" y="488" stroke="none">router</text>
+        <path class="wifi" d="M325,396 a22,22 0 0 1 32,0"/>
+        <path class="wifi" d="M318,386 a32,32 0 0 1 46,0"/>
+        <path class="wifi" d="M311,376 a42,42 0 0 1 60,0"/>
+      </g>
+      <path id="c3" class="cable" d="M387,450 C470,475 520,520 545,572"/>
+      <g id="switch" class="gear">
+        <rect x="460" y="576" width="362" height="66" rx="4"/>
+        <g id="ports" stroke-width="1.2"></g>
+        <circle class="led blink" cx="812" cy="586" r="2.2" stroke="none"/>
+        <text class="lbl" x="641" y="666" stroke="none">48-port switch</text>
+      </g>
+      <path id="d1" class="cable" d="M495,642 C460,672 400,680 350,694"/>
+      <path id="d2" class="cable" d="M540,642 C520,675 490,690 465,706"/>
+      <path id="d3" class="cable" d="M600,642 C595,675 585,692 578,708"/>
+      <path id="d4" class="cable" d="M680,642 C690,672 700,690 708,706"/>
+      <path id="d5" class="cable" d="M740,642 C780,672 820,686 848,698"/>
+      <path id="d6" class="cable" d="M790,642 C860,668 930,640 968,600"/>
+      <path id="d7" class="cable" d="M812,630 C920,610 1040,650 1098,690"/>
+      <g id="g1" class="gear">
+        <rect x="290" y="690" width="64" height="44" rx="3"/>
+        <rect x="296" y="696" width="52" height="32"/>
+        <line x1="322" y1="734" x2="322" y2="744"/>
+        <line x1="304" y1="744" x2="340" y2="744"/>
+        <text class="lbl" x="322" y="766" stroke="none">desktop</text>
+      </g>
+      <g id="g2" class="gear">
+        <rect x="438" y="700" width="50" height="56" rx="3"/>
+        <line x1="438" y1="718" x2="488" y2="718"/>
+        <line x1="438" y1="736" x2="488" y2="736"/>
+        <circle class="led" cx="448" cy="709" r="2" stroke="none"/>
+        <circle cx="448" cy="727" r="2"/>
+        <circle class="led blink" cx="448" cy="745" r="2" stroke="none"/>
+        <text class="lbl" x="463" y="776" stroke="none">server</text>
+      </g>
+      <g id="g3" class="gear">
+        <rect x="552" y="710" width="52" height="46" rx="3"/>
+        <rect x="560" y="718" width="10" height="30"/>
+        <rect x="576" y="718" width="10" height="30"/>
+        <circle class="led blink" cx="596" cy="722" r="2" stroke="none"/>
+        <text class="lbl" x="578" y="776" stroke="none">nas</text>
+      </g>
+      <g id="g4" class="gear">
+        <rect x="682" y="716" width="56" height="30" rx="3"/>
+        <rect x="694" y="704" width="32" height="12"/>
+        <rect x="694" y="746" width="32" height="10"/>
+        <circle class="led" cx="730" cy="724" r="2" stroke="none"/>
+        <text class="lbl" x="710" y="776" stroke="none">printer</text>
+      </g>
+      <g id="g5" class="gear">
+        <rect x="826" y="702" width="46" height="34" rx="3"/>
+        <rect x="832" y="708" width="18" height="12"/>
+        <line x1="856" y1="710" x2="866" y2="710"/>
+        <line x1="856" y1="718" x2="866" y2="718"/>
+        <line x1="856" y1="726" x2="866" y2="726"/>
+        <path d="M826,700 q-8,-14 4,-16 q10,-2 12,10"/>
+        <text class="lbl" x="849" y="758" stroke="none">voip</text>
+      </g>
+      <g id="g6" class="gear">
+        <rect x="946" y="560" width="44" height="22" rx="6"/>
+        <circle cx="982" cy="571" r="5"/>
+        <line x1="958" y1="582" x2="958" y2="596"/>
+        <line x1="948" y1="596" x2="968" y2="596"/>
+        <text class="lbl" x="968" y="546" stroke="none">ip cam</text>
+      </g>
+      <g id="g7" class="gear">
+        <rect x="1062" y="676" width="92" height="54" rx="3"/>
+        <rect x="1068" y="682" width="80" height="42"/>
+        <line x1="1090" y1="730" x2="1126" y2="730"/>
+        <text class="lbl" x="1108" y="752" stroke="none">smart tv</text>
+      </g>
+      <g id="w1" class="gear">
+        <rect x="952" y="258" width="62" height="38" rx="2"/>
+        <path d="M944,304 L952,296 M1014,296 L1022,304 M944,304 L1022,304"/>
+        <path class="wifi" d="M975,246 a14,14 0 0 1 16,0"/>
+        <path class="wifi" d="M969,238 a22,22 0 0 1 28,0"/>
+        <text class="lbl" x="983" y="326" stroke="none">laptop</text>
+      </g>
+      <g id="w2" class="gear">
+        <rect x="1078" y="350" width="26" height="46" rx="4"/>
+        <line x1="1086" y1="390" x2="1096" y2="390"/>
+        <path class="wifi" d="M1084,340 a10,10 0 0 1 14,0"/>
+        <path class="wifi" d="M1079,333 a17,17 0 0 1 24,0"/>
+        <text class="lbl" x="1091" y="418" stroke="none">phone</text>
+      </g>
+      <g id="w3" class="gear">
+        <rect x="1148" y="240" width="40" height="54" rx="4"/>
+        <line x1="1162" y1="286" x2="1174" y2="286"/>
+        <path class="wifi" d="M1160,229 a11,11 0 0 1 16,0"/>
+        <path class="wifi" d="M1154,221 a19,19 0 0 1 28,0"/>
+        <text class="lbl" x="1168" y="316" stroke="none">tablet</text>
+      </g>
+      <g id="pulses"></g>
+    </g>
+  </svg>
+
+  <div id="mast">
+    <div class="eyebrow">An iDezign Technology Site</div>
+    <div class="logorow">
+      <img src="/logos/iDezign-wordmark-white.png" alt="iDezign"
+           onerror="this.style.display='none';document.getElementById('wm-fallback').style.display='inline-block'">
+      <sup>^com</sup>
+    </div>
+    <span id="wm-fallback" class="wordmark"><span class="imark">&#305;<span class="dot"></span></span>Dezign<sup>^com</sup></span>
+    <div class="route">idezign.ai &rarr; <b>idezign.com</b></div>
+  </div>
+
+  <div id="stage">
+    <div id="tagline"><span id="typed"></span><span class="caret"></span></div>
+    <div id="loading">Loading</div>
+    <div id="loadbar"><div class="fill"></div></div>
+    <div id="enter">
+      <a href="https://idezign.com" id="enterBtn">Enter idezign.com &rarr;</a>
+      <div class="sub">The hardware side of iDezign Technology &mdash; hands-on since 1997.</div>
+    </div>
+  </div>
+
+  <div id="footer">&copy; <b>iDezign Technology</b> &mdash; idezign.ai &middot; idezign.com</div>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const portsG = $('ports');
+  const portEls = [];
+  for (let row = 0; row < 2; row++) {
+    for (let i = 0; i < 24; i++) {
+      const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      r.setAttribute('x', 470 + i * 14.2);
+      r.setAttribute('y', 590 + row * 22);
+      r.setAttribute('width', 10);
+      r.setAttribute('height', 9);
+      r.setAttribute('opacity', 0);
+      if (Math.random() < 0.18) r.setAttribute('stroke', '#A82828');
+      portsG.appendChild(r);
+      portEls.push(r);
+    }
+  }
+
+  const cables = ['c1','c2','c3','d1','d2','d3','d4','d5','d6','d7'].map($);
+  for (const p of cables) {
+    const len = p.getTotalLength();
+    p.style.strokeDasharray = len;
+    p.style.strokeDashoffset = len;
+  }
+
+  function drawCable(p, dur) {
+    return new Promise(res => {
+      const len = p.getTotalLength();
+      const t0 = performance.now();
+      (function step(now) {
+        const k = Math.min((now - t0) / dur, 1);
+        p.style.strokeDashoffset = len * Math.pow(1 - k, 3);
+        if (k < 1) requestAnimationFrame(step); else res();
+      })(performance.now());
+    });
+  }
+
+  const show = id => $(id).classList.add('on');
+  const wifiOn = id => $(id).querySelectorAll('.wifi').forEach((w, i) => {
+    w.classList.add('on');
+    w.style.animationDelay = (i * 0.25) + 's';
+  });
+
+  (async function buildNetwork() {
+    await sleep(400);
+    show('cloud');
+    await sleep(500);
+    await drawCable($('c1'), 550);
+    show('modem');
+    await sleep(380);
+    await drawCable($('c2'), 550);
+    show('router');
+    await sleep(300);
+    wifiOn('router');
+    await sleep(250);
+    await drawCable($('c3'), 600);
+    show('switch');
+    for (let i = 0; i < portEls.length; i++) {
+      setTimeout(() => portEls[i].setAttribute('opacity', 1), i * 18);
+    }
+    await sleep(700);
+
+    const wired = [['d1','g1'],['d2','g2'],['d3','g3'],['d4','g4'],['d5','g5'],['d6','g6'],['d7','g7']];
+    await Promise.all(wired.map(([c, g], i) =>
+      (async () => {
+        await sleep(i * 160);
+        await drawCable($(c), 480);
+        show(g);
+      })()
+    ));
+
+    for (const w of ['w1','w2','w3']) {
+      show(w);
+      wifiOn(w);
+      await sleep(260);
+    }
+
+    startPulses();
+  })();
+
+  const pulsesG = $('pulses');
+  function runPulse(path, dur) {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('r', 2.6);
+    c.setAttribute('fill', '#A82828');
+    c.setAttribute('stroke', 'none');
+    pulsesG.appendChild(c);
+    const len = path.getTotalLength();
+    const t0 = performance.now();
+    (function step(now) {
+      const k = Math.min((now - t0) / dur, 1);
+      const pt = path.getPointAtLength(len * k);
+      c.setAttribute('cx', pt.x);
+      c.setAttribute('cy', pt.y);
+      if (k < 1) requestAnimationFrame(step);
+      else c.remove();
+    })(performance.now());
+  }
+  function startPulses() {
+    const drops = ['d1','d2','d3','d4','d5','d6','d7'];
+    (async function loop() {
+      while (true) {
+        runPulse($('c1'), 700);
+        await sleep(700);
+        runPulse($('c2'), 700);
+        await sleep(700);
+        runPulse($('c3'), 700);
+        await sleep(700);
+        runPulse($(drops[Math.floor(Math.random() * drops.length)]), 600);
+        await sleep(1400);
+      }
+    })();
+  }
+
+  const TAGLINE = 'this site deals with the hardware side of things';
+  const typedEl = $('typed');
+  const loadingEl = $('loading');
+  const loadbarEl = $('loadbar');
+  const fillEl = loadbarEl.querySelector('.fill');
+  const enterEl = $('enter');
+
+  let ci = 0;
+  const typeTimer = setInterval(() => {
+    typedEl.textContent = TAGLINE.slice(0, ++ci);
+    if (ci >= TAGLINE.length) {
+      clearInterval(typeTimer);
+      startLoading();
+    }
+  }, 42);
+
+  function startLoading() {
+    loadingEl.style.opacity = 1;
+    loadbarEl.style.opacity = 1;
+    let dots = 0;
+    const dotTimer = setInterval(() => {
+      dots = (dots + 1) % 4;
+      loadingEl.textContent = 'Loading' + '.'.repeat(dots);
+    }, 350);
+
+    const DURATION = 4600;
+    const t0 = performance.now();
+    (function tick(now) {
+      const p = Math.min((now - t0) / DURATION, 1);
+      fillEl.style.width = (p * 100).toFixed(1) + '%';
+      if (p < 1) { requestAnimationFrame(tick); }
+      else {
+        clearInterval(dotTimer);
+        loadingEl.textContent = 'Network online';
+        enterEl.classList.add('show');
+      }
+    })(performance.now());
+  }
+})();
+</script>
+</body>
+</html>
