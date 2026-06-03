@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.05.18-preflight'
+$script:ModuleVersion = '2026.06.01-v2.5-stage-manifest'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
