@@ -36,6 +36,70 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Toolkit version: $VERSION"
 
+      # ----------------------------------------------------------------
+      # v2.6 follow-up: guard against the failure mode that bit us when
+      # the manifest got bumped but the matching script change wasn't
+      # pushed together. Compare every script's embedded $ScriptVersion
+      # against what the manifest claims is its current version. If
+      # ANY pair disagrees, fail the build BEFORE rebuilding the zip,
+      # so a mismatched zip can never reach dist/.
+      # ----------------------------------------------------------------
+      - name: Verify scripts match the manifest
+        run: |
+          set -euo pipefail
+          python3 << 'PYEOF'
+          import json, os, re, sys
+
+          mf = json.load(open('scripts/iDezign_Versions.json'))
+          expected = mf.get('scripts', {})
+          pat = re.compile(r"""\$ScriptVersion\s*=\s*['\"]([^'\"]+)['\"]""")
+
+          ok, mismatches, missing = [], [], []
+          for fname, claimed in expected.items():
+              # The manifest itself has no $ScriptVersion line - skip.
+              if fname.lower().endswith('.json'):
+                  ok.append((fname, '(manifest)'))
+                  continue
+              path = os.path.join('scripts', fname)
+              if not os.path.isfile(path):
+                  missing.append(fname)
+                  continue
+              text = open(path, encoding='utf-8').read()
+              m = pat.search(text)
+              if not m:
+                  mismatches.append((fname, claimed, '(no $ScriptVersion line found)'))
+                  continue
+              actual = m.group(1)
+              if actual == claimed:
+                  ok.append((fname, actual))
+              else:
+                  mismatches.append((fname, claimed, actual))
+
+          print('=== Version consistency check ===')
+          for f, v in ok:
+              print(f'  OK       {f}: {v}')
+          for f in missing:
+              print(f'  MISSING  {f} listed in manifest but file not found')
+
+          if mismatches or missing:
+              print()
+              print('FAIL - some scripts do not match their manifest entries:')
+              for f, claimed, actual in mismatches:
+                  print(f'  {f}')
+                  print(f'    manifest claims: {claimed}')
+                  print(f'    file contains  : {actual}')
+              for f in missing:
+                  print(f'  {f} (file missing)')
+              print()
+              print('Fix by either:')
+              print('  (a) bumping the file\'s $ScriptVersion to match the manifest, or')
+              print('  (b) reverting the manifest entry to match the file.')
+              sys.exit(1)
+
+          print()
+          print('All scripts match their manifest entries.')
+          PYEOF
+
       - name: Stage files for the zip
         run: |
           set -euo pipefail
@@ -76,7 +140,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet -- dist/iDezign-Toolkit.zip; then
-            echo "dist/iDezign-Toolkit.zip is unchanged — nothing to commit."
+            echo "dist/iDezign-Toolkit.zip is unchanged \u2014 nothing to commit."
             exit 0
           fi
 
