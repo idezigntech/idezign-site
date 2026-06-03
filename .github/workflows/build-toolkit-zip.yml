@@ -52,7 +52,7 @@ jobs:
 
           mf = json.load(open('scripts/iDezign_Versions.json'))
           expected = mf.get('scripts', {})
-          pat = re.compile(r"""\$ScriptVersion\s*=\s*['\"]([^'\"]+)['\"]""")
+          pat = re.compile(r"""(?:\$ScriptVersion|\$script:ModuleVersion)\s*=\s*['\"]([^'\"]+)['\"]""")
 
           ok, mismatches, missing = [], [], []
           for fname, claimed in expected.items():
