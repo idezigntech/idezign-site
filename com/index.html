@@ -8,7 +8,7 @@
 <title>iDezign.com — The Hardware Side of Things</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@200;300;400;500&family=Orbitron:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root{
   /* dark scheme — same grades as the idezign.ai footer */
@@ -101,13 +101,16 @@ body{
 #enter.show{opacity:1;transform:translateY(0);visibility:visible}
 #enter a{
   display:inline-block;text-decoration:none;
-  background:var(--red);color:#fff;padding:15px 30px;font-size:15px;
-  letter-spacing:.06em;text-transform:uppercase;font-weight:400;
+  font-family:'Orbitron','Jost',sans-serif;font-weight:600;
+  background:var(--red);color:#fff;padding:26px 58px;font-size:14px;
+  letter-spacing:.14em;text-transform:uppercase;
+  border-radius:50%;
+  box-shadow:0 0 0 4px var(--bg),0 0 0 5.5px var(--red);
   transition:all .35s var(--ease);
 }
 #enter a:hover{
-  background:var(--red-deep);transform:translateY(-2px);
-  box-shadow:0 10px 30px -10px rgba(168,40,40,.5);
+  background:var(--red-deep);transform:translateY(-2px) scale(1.03);
+  box-shadow:0 0 0 4px var(--bg),0 0 0 5.5px var(--red-deep),0 16px 44px -14px rgba(168,40,40,.6);
 }
 #enter .sub{
   margin-top:14px;font-size:13px;letter-spacing:.04em;color:var(--muted);
@@ -272,7 +275,7 @@ body{
     <div id="loading">Loading</div>
     <div id="loadbar"><div class="fill"></div></div>
     <div id="enter">
-      <a href="https://idezign.com" id="enterBtn">Enter idezign.com &rarr;</a>
+      <a href="https://idezign.com" id="enterBtn">Enter idezign.com</a>
       <div class="sub">The hardware side of iDezign Technology &mdash; hands-on since 1997.</div>
     </div>
   </div>
