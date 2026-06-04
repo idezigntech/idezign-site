@@ -100,17 +100,12 @@ body{
 }
 #enter.show{opacity:1;transform:translateY(0);visibility:visible}
 #enter a{
-  display:inline-block;text-decoration:none;
-  font-family:'Orbitron','Jost',sans-serif;font-weight:600;
-  background:var(--red);color:#fff;padding:26px 58px;font-size:14px;
-  letter-spacing:.14em;text-transform:uppercase;
-  border-radius:50%;
-  box-shadow:0 0 0 4px var(--bg),0 0 0 5.5px var(--red);
-  transition:all .35s var(--ease);
+  display:inline-block;text-decoration:none;line-height:0;
+  transition:transform .35s var(--ease),filter .35s var(--ease);
 }
 #enter a:hover{
-  background:var(--red-deep);transform:translateY(-2px) scale(1.03);
-  box-shadow:0 0 0 4px var(--bg),0 0 0 5.5px var(--red-deep),0 16px 44px -14px rgba(168,40,40,.6);
+  transform:scale(1.05);
+  filter:drop-shadow(0 14px 34px rgba(168,40,40,.5));
 }
 #enter .sub{
   margin-top:14px;font-size:13px;letter-spacing:.04em;color:var(--muted);
@@ -275,7 +270,29 @@ body{
     <div id="loading">Loading</div>
     <div id="loadbar"><div class="fill"></div></div>
     <div id="enter">
-      <a href="https://idezign.com" id="enterBtn">Enter idezign.com</a>
+      <a href="https://idezign.com" id="enterBtn" aria-label="Enter idezign.com">
+        <svg width="360" viewBox="0 0 640 230" xmlns="http://www.w3.org/2000/svg" role="img">
+          <defs>
+            <linearGradient id="swooshred" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#e0564e"/>
+              <stop offset="45%" stop-color="#A82828"/>
+              <stop offset="100%" stop-color="#4e0c0e"/>
+            </linearGradient>
+            <mask id="swooshcut">
+              <rect width="640" height="230" fill="#fff"/>
+              <ellipse cx="320" cy="115" rx="238" ry="62" fill="#000"/>
+              <ellipse cx="66" cy="162" rx="150" ry="56" fill="#000" transform="rotate(-16 66 162)"/>
+              <ellipse cx="574" cy="68" rx="150" ry="56" fill="#000" transform="rotate(-16 574 68)"/>
+            </mask>
+          </defs>
+          <g mask="url(#swooshcut)">
+            <ellipse cx="320" cy="115" rx="306" ry="100" fill="url(#swooshred)"/>
+          </g>
+          <ellipse cx="320" cy="115" rx="216" ry="57" fill="#fff"/>
+          <ellipse cx="320" cy="115" rx="202" ry="47" fill="#0a0a0a"/>
+          <text x="320" y="126" text-anchor="middle" font-family="Orbitron, Jost, sans-serif" font-weight="700" font-size="30" letter-spacing="9" fill="#fff">ENTER &gt;</text>
+        </svg>
+      </a>
       <div class="sub">The hardware side of iDezign Technology &mdash; hands-on since 1997.</div>
     </div>
   </div>
