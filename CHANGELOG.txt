@@ -4,6 +4,19 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.7  - 2026-06-23  - DISM standalone tool
+  * New menu item "DISM": runs the full DISM + SFC health pass in sequence -
+    CheckHealth (baseline) -> ScanHealth (deep scan) -> RestoreHealth (only
+    if corruption is found) -> SFC /scannow -> CheckHealth (after-snapshot).
+  * Before/after summary at the end: shows the state of the component store
+    before and after the pass, plus SFC's verdict, so the tech can see at a
+    glance whether anything was actually repaired.
+  * Full transcript saved to Desktop (iDezign_DISM_<timestamp>.log) for
+    review or client hand-off.
+  * Faster than running the full Remediation script when you already know
+    you only want the DISM/SFC pair (skips essential services, Defender
+    state, time sync, etc).
+
 v2.6  - 2026-06-02  - All-profiles cleanup
   * Cleanup script Phase 2 now iterates Win32_UserProfile and cleans Temp,
     Edge & Chrome caches, Recent items, thumbnail/icon caches and INetCache
