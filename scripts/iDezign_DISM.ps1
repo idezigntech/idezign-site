@@ -14,7 +14,7 @@
 #  Run as Administrator. Closes when done; no auto-reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.06.03-dism-v1'
+$ScriptVersion = '2026.06.23-dism-v1.1'
 
 #region --- Safety + module load -------------------------------------------
 
@@ -31,7 +31,6 @@ if (Test-Path $modulePath) {
     Import-Module $modulePath -Force -ErrorAction SilentlyContinue
 }
 
-# Use Show-VersionCheck if available (it's defined in Common.psm1)
 if (Get-Command -Name Show-VersionCheck -ErrorAction SilentlyContinue) {
     Show-VersionCheck -ScriptName 'iDezign_DISM.ps1' -CurrentVersion $ScriptVersion -ScriptDir $ScriptDir
 }
@@ -40,17 +39,16 @@ if (Get-Command -Name Show-VersionCheck -ErrorAction SilentlyContinue) {
 
 #region --- Banner ---------------------------------------------------------
 
-if (Get-Command -Name Get-iDezignBanner -ErrorAction SilentlyContinue) {
-    Get-iDezignBanner -Title 'DISM + SFC Health Pass' -Subtitle 'Component store repair + system file check'
-} else {
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  iDezign Toolkit - DISM + SFC Health Pass" -ForegroundColor Cyan
-    Write-Host "============================================================" -ForegroundColor Cyan
-    Write-Host "  Script version : $ScriptVersion" -ForegroundColor DarkGray
-    Write-Host "  Started        : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
-    Write-Host ""
-}
+# v1.1: don't call Get-iDezignBanner (its parameter names differ by version
+# of Common.psm1). Use the fallback banner unconditionally - it's clear,
+# self-contained, and won't error on parameter mismatches.
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  iDezign Toolkit - DISM + SFC Health Pass" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  Script version : $ScriptVersion" -ForegroundColor DarkGray
+Write-Host "  Started        : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor DarkGray
+Write-Host ""
 
 #endregion
 
@@ -74,6 +72,12 @@ try {
 #region --- Helpers --------------------------------------------------------
 
 function Invoke-DismPhase {
+    <#
+        v1.1: runs DISM as a background job so we can show a live progress
+        indicator while it works. DISM's own ASCII progress bar gets lost
+        when we capture stdout, so we substitute Write-Progress + a heartbeat
+        line every 10 seconds. The transcript still captures the final output.
+    #>
     param(
         [Parameter(Mandatory)] [string] $Phase   # CheckHealth / ScanHealth / RestoreHealth
     )
@@ -81,13 +85,46 @@ function Invoke-DismPhase {
     Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host ("  DISM /Online /Cleanup-Image /{0}" -f $Phase) -ForegroundColor Cyan
     Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host "  (running in background - heartbeat every 10s so you know it's alive)" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $job = Start-Job -ScriptBlock {
+        param($p)
+        $output = & DISM.exe /Online /Cleanup-Image /$p 2>&1 | Out-String
+        return @{ ExitCode = $LASTEXITCODE; Output = $output }
+    } -ArgumentList $Phase
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = & DISM.exe /Online /Cleanup-Image /$Phase 2>&1 | Out-String
-    $code = $LASTEXITCODE
+    $nextBeat = 10  # seconds until next heartbeat line
+
+    while ($job.State -eq 'Running') {
+        Start-Sleep -Milliseconds 500
+        $elapsed = [int]$sw.Elapsed.TotalSeconds
+
+        # Live progress bar at top of terminal (indeterminate spinner)
+        Write-Progress `
+            -Activity ("DISM /{0}" -f $Phase) `
+            -Status ("Running... {0:mm\:ss} elapsed" -f $sw.Elapsed) `
+            -PercentComplete -1
+
+        # Heartbeat line every 10s in the transcript stream
+        if ($elapsed -ge $nextBeat) {
+            Write-Host ("  ...still running   ({0:mm\:ss} elapsed)" -f $sw.Elapsed) -ForegroundColor DarkGray
+            $nextBeat += 10
+        }
+    }
+
+    Write-Progress -Activity ("DISM /{0}" -f $Phase) -Completed
+
+    $result = Receive-Job -Job $job
+    Remove-Job -Job $job -Force
     $sw.Stop()
-    Write-Host $output
-    Write-Host ("  ({0} done in {1:N1}s, exit code {2})" -f $Phase, $sw.Elapsed.TotalSeconds, $code) -ForegroundColor DarkGray
-    return @{ ExitCode = $code; Output = $output }
+
+    Write-Host ""
+    Write-Host $result.Output
+    Write-Host ("  ({0} done in {1:N1}s, exit code {2})" -f $Phase, $sw.Elapsed.TotalSeconds, $result.ExitCode) -ForegroundColor DarkGray
+
+    return @{ ExitCode = $result.ExitCode; Output = $result.Output }
 }
 
 function ConvertTo-DismStatus {
@@ -101,17 +138,52 @@ function ConvertTo-DismStatus {
 }
 
 function Invoke-SfcScan {
+    <#
+        v1.1: same job + heartbeat pattern as DISM, but SFC has its own
+        nice percentage progress when it prints to host. We still wrap it
+        in a job so the heartbeat works consistently across phases.
+    #>
     Write-Host ""
     Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
     Write-Host "  SFC /scannow" -ForegroundColor Cyan
     Write-Host "------------------------------------------------------------" -ForegroundColor Cyan
+    Write-Host "  (running in background - heartbeat every 10s so you know it's alive)" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $job = Start-Job -ScriptBlock {
+        $output = & sfc.exe /scannow 2>&1 | Out-String
+        return @{ ExitCode = $LASTEXITCODE; Output = $output }
+    }
+
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $output = & sfc.exe /scannow 2>&1 | Out-String
-    $code = $LASTEXITCODE
+    $nextBeat = 10
+
+    while ($job.State -eq 'Running') {
+        Start-Sleep -Milliseconds 500
+        $elapsed = [int]$sw.Elapsed.TotalSeconds
+
+        Write-Progress `
+            -Activity "SFC /scannow" `
+            -Status ("Running... {0:mm\:ss} elapsed" -f $sw.Elapsed) `
+            -PercentComplete -1
+
+        if ($elapsed -ge $nextBeat) {
+            Write-Host ("  ...still running   ({0:mm\:ss} elapsed)" -f $sw.Elapsed) -ForegroundColor DarkGray
+            $nextBeat += 10
+        }
+    }
+
+    Write-Progress -Activity "SFC /scannow" -Completed
+
+    $result = Receive-Job -Job $job
+    Remove-Job -Job $job -Force
     $sw.Stop()
-    Write-Host $output
-    Write-Host ("  (SFC done in {0:N1}s, exit code {1})" -f $sw.Elapsed.TotalSeconds, $code) -ForegroundColor DarkGray
-    return @{ ExitCode = $code; Output = $output }
+
+    Write-Host ""
+    Write-Host $result.Output
+    Write-Host ("  (SFC done in {0:N1}s, exit code {1})" -f $sw.Elapsed.TotalSeconds, $result.ExitCode) -ForegroundColor DarkGray
+
+    return @{ ExitCode = $result.ExitCode; Output = $result.Output }
 }
 
 function ConvertTo-SfcStatus {
@@ -128,15 +200,12 @@ function ConvertTo-SfcStatus {
 
 #region --- Run the pass ---------------------------------------------------
 
-# Phase 1: baseline CheckHealth (fast, no Windows Update contact)
 $beforeCheck = Invoke-DismPhase -Phase 'CheckHealth'
 $beforeStatus = ConvertTo-DismStatus $beforeCheck.Output
 
-# Phase 2: ScanHealth (deeper, sets corruption flag)
 $scan = Invoke-DismPhase -Phase 'ScanHealth'
 $scanStatus = ConvertTo-DismStatus $scan.Output
 
-# Phase 3: RestoreHealth - only if scan found something fixable
 $restoreRan = $false
 $restoreStatus = 'skipped'
 if ($scanStatus -eq 'repairable' -or $scan.ExitCode -ne 0) {
@@ -150,11 +219,9 @@ if ($scanStatus -eq 'repairable' -or $scan.ExitCode -ne 0) {
     Write-Host "  Scan found nothing repairable - skipping RestoreHealth." -ForegroundColor Green
 }
 
-# Phase 4: SFC /scannow (always runs - catches system files DISM doesn't touch)
 $sfc = Invoke-SfcScan
 $sfcStatus = ConvertTo-SfcStatus $sfc.Output
 
-# Phase 5: after-snapshot CheckHealth (so the summary can show change)
 $afterCheck = Invoke-DismPhase -Phase 'CheckHealth'
 $afterStatus = ConvertTo-DismStatus $afterCheck.Output
 
