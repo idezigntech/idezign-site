@@ -11,7 +11,7 @@
     "iDezign_Toolkit_GUI.ps1": "2026.05.26-gui-v2.4-migrate",
     "iDezign_SavePDF.ps1": "2026.05.25-savepdf-v1",
     "iDezign_Migration_Utility.ps1": "2026.05.26-migrate-v1",
-    "iDezign_DISM.ps1": "2026.06.03-dism-v1"
+    "iDezign_DISM.ps1": "2026.06.23-dism-v1.1"
   },
   "tools": [
     {
