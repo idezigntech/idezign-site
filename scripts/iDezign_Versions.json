@@ -1,16 +1,16 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-06-23",
-  "toolkitVersion": "2.7",
+  "manifestUpdated": "2026-06-24",
+  "toolkitVersion": "2.8",
   "scripts": {
     "iDezign_Common.psm1": "2026.06.01-v2.5-stage-manifest",
     "iDezign_Cleanup_Utility.ps1": "2026.06.02-allprofiles",
     "iDezign_Diagnostics.ps1": "2026.06.01-v2.5-driver-updates",
     "iDezign_Remediation.ps1": "2026.05.25-feedback-svcfilter",
     "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
-    "iDezign_Toolkit_GUI.ps1": "2026.05.26-gui-v2.4-migrate",
+    "iDezign_Toolkit_GUI.ps1": "2026.06.24-gui-v2.8-icons",
     "iDezign_SavePDF.ps1": "2026.05.25-savepdf-v1",
-    "iDezign_Migration_Utility.ps1": "2026.05.26-migrate-v1",
+    "iDezign_Migration_Utility.ps1": "2026.06.24-migrate-v2.1-heartbeat",
     "iDezign_DISM.ps1": "2026.06.23-dism-v1.1"
   },
   "tools": [
