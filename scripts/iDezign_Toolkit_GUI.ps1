@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.05.26-gui-v2.4-migrate'
+$ScriptVersion = '2026.06.24-gui-v2.8-icons'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -343,7 +343,16 @@ $row_Click = {
 }
 
 function New-ScriptRow {
+    # v2.8 visual upgrade:
+    #   * Prefixes each row with the emoji from the manifest "icon" field
+    #     (Segoe UI Emoji forced so PS 5.1 / WPF renders the glyphs reliably).
+    #   * For destructive tools, appends a small crimson "DESTRUCTIVE" pill
+    #     badge next to the name, in addition to the existing red text colour.
+    #   * Subtitle column stays right-aligned (auto width) as before.
     param($Def)
+
+    $brush = New-Object System.Windows.Media.BrushConverter
+
     $btn = New-Object System.Windows.Controls.Button
     $btn.Style = $window.FindResource('ScriptRow')
     $btn.Tag   = $Def.key
@@ -356,17 +365,54 @@ function New-ScriptRow {
     $g.ColumnDefinitions.Add($c1)
     $g.ColumnDefinitions.Add($c2)
 
+    # Left side = horizontal StackPanel of [icon] [name] [optional DESTRUCTIVE badge]
+    $left = New-Object System.Windows.Controls.StackPanel
+    $left.Orientation = 'Horizontal'
+    $left.VerticalAlignment = 'Center'
+
+    if ($Def.icon) {
+        $iconBlock = New-Object System.Windows.Controls.TextBlock
+        $iconBlock.Text = [string]$Def.icon
+        $iconBlock.FontSize = 16
+        $iconBlock.VerticalAlignment = 'Center'
+        $iconBlock.Margin = [System.Windows.Thickness]::new(0,0,10,0)
+        # Force the emoji font so PS5.1/WPF picks colour glyphs over fallback boxes
+        try { $iconBlock.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI Emoji' } catch { }
+        [void]$left.Children.Add($iconBlock)
+    }
+
     $name = New-Object System.Windows.Controls.TextBlock
     $name.Text = [string]$Def.displayName
     $name.FontSize = 13
     $name.VerticalAlignment = 'Center'
     if ($Def.destructive) {
-        $name.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#A82828')
+        $name.Foreground = $brush.ConvertFromString('#A82828')
+        $name.FontWeight = 'SemiBold'
     } else {
-        $name.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#161616')
+        $name.Foreground = $brush.ConvertFromString('#161616')
     }
-    [System.Windows.Controls.Grid]::SetColumn($name, 0)
-    [void]$g.Children.Add($name)
+    [void]$left.Children.Add($name)
+
+    if ($Def.destructive) {
+        $badge = New-Object System.Windows.Controls.Border
+        $badge.Background = $brush.ConvertFromString('#A82828')
+        $badge.CornerRadius = New-Object System.Windows.CornerRadius(3)
+        $badge.Padding = [System.Windows.Thickness]::new(6,1,6,2)
+        $badge.Margin = [System.Windows.Thickness]::new(8,0,0,0)
+        $badge.VerticalAlignment = 'Center'
+
+        $badgeText = New-Object System.Windows.Controls.TextBlock
+        $badgeText.Text = 'DESTRUCTIVE'
+        $badgeText.FontSize = 9
+        $badgeText.FontWeight = 'Bold'
+        $badgeText.Foreground = $brush.ConvertFromString('#FFFFFF')
+        $badge.Child = $badgeText
+
+        [void]$left.Children.Add($badge)
+    }
+
+    [System.Windows.Controls.Grid]::SetColumn($left, 0)
+    [void]$g.Children.Add($left)
 
     if ($Def.subtitle) {
         $sub = New-Object System.Windows.Controls.TextBlock
@@ -374,7 +420,7 @@ function New-ScriptRow {
         $sub.FontSize = 11
         $sub.VerticalAlignment = 'Center'
         $sub.Margin = [System.Windows.Thickness]::new(12,0,0,0)
-        $sub.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#8A8A8A')
+        $sub.Foreground = $brush.ConvertFromString('#8A8A8A')
         [System.Windows.Controls.Grid]::SetColumn($sub, 1)
         [void]$g.Children.Add($sub)
     }

@@ -31,10 +31,29 @@ param(
     [switch]$SkipOnlineOnly,
     [switch]$ExportPasswords,
     [switch]$SkipScan,
-    [int]$ScanTimeoutMin = 30
+    [int]$ScanTimeoutMin = 30,
+
+    # v2.8 additions (Edge support + restore conflict handling) -----------
+    # On by default - flip $SkipEdge to omit Edge from a backup.
+    [switch]$SkipEdge,
+
+    # How much of each Chrome/Edge profile to back up:
+    #   Bookmarks (default) - bookmarks JSON only (existing behavior)
+    #   Settings            - + Preferences, Web Data (sync seeds + autofill index)
+    #   Full                - whole profile minus Cache/Code Cache (size warning)
+    [ValidateSet('Bookmarks','Settings','Full')]
+    [string]$BrowserProfileDepth = 'Bookmarks',
+
+    # What to do per folder on Restore when the target already has files in it:
+    #   Prompt    (default) - ask per folder: Skip / Overwrite / Merge
+    #   Overwrite           - copy everything, replacing existing files (old behavior)
+    #   Merge               - only copy files that don't exist at destination (/XC /XN /XO)
+    #   Skip                - never touch the target if non-empty
+    [ValidateSet('Prompt','Overwrite','Merge','Skip')]
+    [string]$RestoreAction = 'Prompt'
 )
 
-$ScriptVersion = '2026.05.26-migrate-v1'
+$ScriptVersion = '2026.06.24-migrate-v2.1-heartbeat'
 $ErrorActionPreference = 'Continue'
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -106,13 +125,57 @@ function Get-FolderSize {
     if ($s) { [long]$s } else { [long]0 }
 }
 function Invoke-Robocopy {
+    # v2.1: runs robocopy in a background job so we can emit a heartbeat line
+    # every 10 seconds and a live Write-Progress bar at the top of the console.
+    # Large Documents folders can otherwise sit silent for 5-20 minutes and
+    # look hung. Behaviour is otherwise unchanged.
     param([string]$Source, [string]$Dest, [string[]]$ExtraArgs = @())
-    if (-not (Test-Path -LiteralPath $Source)) { Write-Host "  (source not found, skipping: $Source)" -ForegroundColor DarkYellow; return }
+    if (-not (Test-Path -LiteralPath $Source)) {
+        Write-Host "  (source not found, skipping: $Source)" -ForegroundColor DarkYellow
+        return
+    }
     $null = New-Item -ItemType Directory -Path $Dest -Force
     $rcArgs = @($Source, $Dest, '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:2', '/W:2', '/XJ', '/MT:16', '/NP', '/NFL', '/NDL') + $ExtraArgs
-    robocopy @rcArgs
-    if ($LASTEXITCODE -ge 8) { Write-Host "  robocopy errors (exit $LASTEXITCODE): $Source" -ForegroundColor Yellow }
-    else                     { Write-Host "  OK (robocopy exit $LASTEXITCODE)" -ForegroundColor DarkGray }
+
+    Write-Host ("  copying {0} -> {1}" -f $Source, $Dest) -ForegroundColor DarkGray
+    Write-Host "  (running in background - heartbeat every 10s so you know it's alive)" -ForegroundColor DarkGray
+
+    $job = Start-Job -ScriptBlock {
+        param($args)
+        robocopy @args | Out-Null
+        return $LASTEXITCODE
+    } -ArgumentList @(,$rcArgs)
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $nextBeat = 10
+    $activity = "Robocopy: $(Split-Path -Leaf $Source)"
+
+    while ($job.State -eq 'Running') {
+        Start-Sleep -Milliseconds 500
+        $elapsed = [int]$sw.Elapsed.TotalSeconds
+
+        Write-Progress `
+            -Activity $activity `
+            -Status ("Copying... {0:mm\:ss} elapsed" -f $sw.Elapsed) `
+            -PercentComplete -1
+
+        if ($elapsed -ge $nextBeat) {
+            Write-Host ("  ...still copying   ({0:mm\:ss} elapsed)" -f $sw.Elapsed) -ForegroundColor DarkGray
+            $nextBeat += 10
+        }
+    }
+
+    Write-Progress -Activity $activity -Completed
+
+    $rc = Receive-Job -Job $job
+    Remove-Job -Job $job -Force
+    $sw.Stop()
+
+    if ($rc -ge 8) {
+        Write-Host ("  robocopy errors (exit {0}) in {1:mm\:ss}: {2}" -f $rc, $sw.Elapsed, $Source) -ForegroundColor Yellow
+    } else {
+        Write-Host ("  OK (robocopy exit {0}, {1:mm\:ss})" -f $rc, $sw.Elapsed) -ForegroundColor DarkGray
+    }
 }
 function Find-Chrome {
     foreach ($c in @(
@@ -134,14 +197,40 @@ function Invoke-DefenderScan {
     if ($mp) {
         try { Start-Process $mp -ArgumentList '-SignatureUpdate' -WindowStyle Hidden -Wait -ErrorAction SilentlyContinue } catch { }
         Write-Host "  Scanning with Microsoft Defender (timeout ${TimeoutMin}m, large sets take a while)..." -ForegroundColor DarkGray
-        # Quote the path for the joined argument string (Start-ProcessWithTimeout joins args with spaces).
+        Write-Host "  (running in background - heartbeat every 10s so you know it's alive)" -ForegroundColor DarkGray
+
+        # v2.1: run the scan with our own process + heartbeat loop. The previous
+        # Start-ProcessWithTimeout / WaitForExit blocked silently.
         $scanArgs = @('-Scan','-ScanType','3','-File', ('"{0}"' -f $Path))
-        if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
-            $rc = Start-ProcessWithTimeout -FilePath $mp -ArgumentList $scanArgs -TimeoutMinutes $TimeoutMin -Label 'Defender scan'
-        } else {
-            $p = Start-Process $mp -ArgumentList $scanArgs -WindowStyle Hidden -PassThru
-            if (-not $p.WaitForExit($TimeoutMin * 60 * 1000)) { try { $p.Kill() } catch { }; $rc = -1 } else { $rc = $p.ExitCode }
+        $proc = Start-Process -FilePath $mp -ArgumentList $scanArgs -WindowStyle Hidden -PassThru
+
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $nextBeat = 10
+        $timeoutMs = $TimeoutMin * 60 * 1000
+
+        while (-not $proc.HasExited) {
+            Start-Sleep -Milliseconds 500
+            $elapsedMs = [int]$sw.Elapsed.TotalMilliseconds
+            $elapsedSec = [int]$sw.Elapsed.TotalSeconds
+
+            Write-Progress `
+                -Activity "Defender scan" `
+                -Status ("Scanning... {0:mm\:ss} elapsed (timeout ${TimeoutMin}m)" -f $sw.Elapsed) `
+                -PercentComplete -1
+
+            if ($elapsedSec -ge $nextBeat) {
+                Write-Host ("  ...still scanning  ({0:mm\:ss} elapsed)" -f $sw.Elapsed) -ForegroundColor DarkGray
+                $nextBeat += 10
+            }
+
+            if ($elapsedMs -ge $timeoutMs) {
+                try { $proc.Kill() } catch { }
+                break
+            }
         }
+        Write-Progress -Activity "Defender scan" -Completed
+        $sw.Stop()
+        if ($proc.HasExited) { $rc = $proc.ExitCode } else { $rc = -1 }
         switch ($rc) {
             0       { Write-Host "  Clean - no threats found." -ForegroundColor Green }
             2       { Write-Host "  THREATS FOUND in the backup. Do NOT migrate it until cleaned (Get-MpThreatDetection)." -ForegroundColor Red }
@@ -272,8 +361,72 @@ if ($Mode -eq 'Backup') {
         Write-Host "  come down automatically - no file, set it and forget it." -ForegroundColor DarkGray
     }
 
+    # ----- Microsoft Edge (mirrors Chrome logic) ------------------------------
+    if (-not $SkipEdge) {
+        Write-Host "`n[6/6] Microsoft Edge" -ForegroundColor Green
+        $edgeDir = Join-Path $BackupRoot 'Microsoft Backup'
+        $null = New-Item -ItemType Directory -Path $edgeDir -Force
+        $edgeUserData = Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\User Data'
+        if (Test-Path -LiteralPath $edgeUserData) {
+            Get-ChildItem -LiteralPath $edgeUserData -Directory |
+                Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' } |
+                ForEach-Object {
+                    $bm = Join-Path $_.FullName 'Bookmarks'
+                    if (Test-Path -LiteralPath $bm) {
+                        Copy-Item -LiteralPath $bm -Destination (Join-Path $edgeDir ("{0}_Bookmarks.json" -f $_.Name)) -Force
+                        Write-Host "  Saved bookmarks (fallback copy): $($_.Name)" -ForegroundColor DarkGray
+                    }
+                    if ($BrowserProfileDepth -ne 'Bookmarks') {
+                        foreach ($f in @('Preferences','Web Data','Favorites')) {
+                            $src2 = Join-Path $_.FullName $f
+                            if (Test-Path -LiteralPath $src2) {
+                                Copy-Item -LiteralPath $src2 -Destination (Join-Path $edgeDir ("{0}_{1}" -f $_.Name, $f)) -Recurse -Force -ErrorAction SilentlyContinue
+                            }
+                        }
+                    }
+                    if ($BrowserProfileDepth -eq 'Full') {
+                        $profileDest = Join-Path $edgeDir ("{0}_Profile" -f $_.Name)
+                        $null = New-Item -ItemType Directory -Path $profileDest -Force
+                        $rcA = @($_.FullName, $profileDest, '/E','/COPY:DAT','/R:1','/W:1','/NFL','/NDL','/NJH','/NJS',
+                                 '/XD','Cache','Code Cache','GPUCache','Service Worker','DawnGraphiteCache','DawnWebGPUCache')
+                        robocopy @rcA | Out-Null
+                        $sz = Get-FolderSize $profileDest
+                        Write-Host ("  Full profile snapshot: {0} ({1})" -f $_.Name, (Format-Size $sz)) -ForegroundColor DarkGray
+                    }
+                }
+        } else {
+            Write-Host "  Edge user data not found." -ForegroundColor DarkYellow
+        }
+        Write-Host "  Edge plan: sign in with the client's Microsoft account on the new PC." -ForegroundColor DarkGray
+        Write-Host "  Bookmarks, autofill, extensions, and password vault come down via Sync." -ForegroundColor DarkGray
+    } else {
+        Write-Host "`n[6/6] Microsoft Edge - SKIPPED (-SkipEdge)" -ForegroundColor DarkGray
+    }
+
+    if (-not $SkipEdge -and $BrowserProfileDepth -ne 'Bookmarks' -and (Test-Path -LiteralPath $userData)) {
+        Get-ChildItem -LiteralPath $userData -Directory |
+            Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' } |
+            ForEach-Object {
+                foreach ($f in @('Preferences','Web Data','Bookmarks')) {
+                    $src2 = Join-Path $_.FullName $f
+                    if (Test-Path -LiteralPath $src2) {
+                        Copy-Item -LiteralPath $src2 -Destination (Join-Path $googleDir ("{0}_{1}" -f $_.Name, $f)) -Recurse -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                if ($BrowserProfileDepth -eq 'Full') {
+                    $profileDest = Join-Path $googleDir ("{0}_Profile" -f $_.Name)
+                    $null = New-Item -ItemType Directory -Path $profileDest -Force
+                    $rcA = @($_.FullName, $profileDest, '/E','/COPY:DAT','/R:1','/W:1','/NFL','/NDL','/NJH','/NJS',
+                             '/XD','Cache','Code Cache','GPUCache','Service Worker','DawnGraphiteCache','DawnWebGPUCache')
+                    robocopy @rcA | Out-Null
+                    $sz = Get-FolderSize $profileDest
+                    Write-Host ("  Chrome full profile snapshot: {0} ({1})" -f $_.Name, (Format-Size $sz)) -ForegroundColor DarkGray
+                }
+            }
+    }
+
     Write-Host "`n--- Folder sizes ---" -ForegroundColor Cyan
-    $rows = foreach ($n in 'Desktop','Downloads','Documents','Pictures','Google Backup') {
+    $rows = foreach ($n in 'Desktop','Downloads','Documents','Pictures','Google Backup','Microsoft Backup') {
         $sz = Get-FolderSize (Join-Path $BackupRoot $n)
         [pscustomobject]@{ Folder = $n; Size = (Format-Size $sz); Bytes = $sz }
     }
@@ -283,11 +436,20 @@ if ($Mode -eq 'Backup') {
     if (-not $SkipScan) { Write-Host "`n--- Virus scan ---" -ForegroundColor Cyan; Invoke-DefenderScan -Path $BackupRoot -TimeoutMin $ScanTimeoutMin }
     else                { Write-Host "`n(Virus scan skipped.)" -ForegroundColor DarkGray }
 
-    Write-Host "`nBackup complete." -ForegroundColor Cyan
+    # v2.1: prominent finish banner - the old single-line "Backup complete."
+    # was easy to miss when the Defender scan output filled the console.
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host "                   B A C K U P   C O M P L E T E             " -ForegroundColor Green
+    Write-Host "============================================================" -ForegroundColor Green
     if ($Destination) { Write-Host "On the removable/destination drive - nothing left on this PC:" -ForegroundColor Green }
     else              { Write-Host "On the Desktop:" -ForegroundColor Green }
-    Write-Host "  $BackupRoot"
+    Write-Host "  $BackupRoot" -ForegroundColor White
+    Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
+
+    Write-Host "Press any key to close this window..." -ForegroundColor DarkGray
+    try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
 }
 #endregion
 
@@ -311,10 +473,55 @@ if ($Mode -eq 'Restore') {
         @{ Name='Pictures';  Src=(Join-Path $BackupPath 'Pictures');  Dst=$destPictures  }
         @{ Name='Downloads'; Src=(Join-Path $BackupPath 'Downloads'); Dst=$destDownloads }
     )
+    function Get-RestoreActionForFolder {
+        param([string]$Name,[string]$Dst,[string]$Mode)
+        if ($Mode -ne 'Prompt') { return $Mode }
+        $existing = @()
+        if (Test-Path -LiteralPath $Dst) {
+            $existing = Get-ChildItem -LiteralPath $Dst -Force -ErrorAction SilentlyContinue
+        }
+        if ($existing.Count -eq 0) { return 'Overwrite' }
+        $bytes = ($existing | Where-Object { -not $_.PSIsContainer } | Measure-Object -Sum Length).Sum
+        $human = if ($bytes -ge 1GB) { "{0:N1} GB" -f ($bytes/1GB) }
+                 elseif ($bytes -ge 1MB) { "{0:N1} MB" -f ($bytes/1MB) }
+                 elseif ($bytes -ge 1KB) { "{0:N1} KB" -f ($bytes/1KB) }
+                 else { "$bytes B" }
+        Write-Host ""
+        Write-Host ("  Target '{0}' already has content: {1} items, {2}" -f $Name, $existing.Count, $human) -ForegroundColor Yellow
+        Write-Host "    [O]verwrite   replace existing files with the backup copy"
+        Write-Host "    [M]erge       only copy files that don't exist at destination (safe)"
+        Write-Host "    [S]kip        leave this folder alone, copy nothing"
+        while ($true) {
+            $r = (Read-Host "  Choose O/M/S").ToUpper()
+            switch ($r) {
+                'O' { return 'Overwrite' }
+                'M' { return 'Merge' }
+                'S' { return 'Skip' }
+                default { Write-Host "  Please answer O, M, or S." -ForegroundColor DarkYellow }
+            }
+        }
+    }
+
     foreach ($m in $map) {
         Write-Host "[$($m.Name)]" -ForegroundColor Green
         $extra = @()
-        if ($RecentFolders -contains $m.Name) { $extra = @("/MAXAGE:$RecentDays"); Write-Host "  (recent only: last $RecentDays days)" -ForegroundColor Yellow }
+        if ($RecentFolders -contains $m.Name) {
+            $extra = @("/MAXAGE:$RecentDays")
+            Write-Host "  (recent only: last $RecentDays days)" -ForegroundColor Yellow
+        }
+
+        $action = Get-RestoreActionForFolder -Name $m.Name -Dst $m.Dst -Mode $RestoreAction
+        switch ($action) {
+            'Skip' {
+                Write-Host "  Skipped (existing files preserved)." -ForegroundColor DarkGray
+                continue
+            }
+            'Merge' {
+                $extra += @('/XC','/XN','/XO')
+                Write-Host "  Merge mode: only new files will be added; existing files left alone." -ForegroundColor DarkGray
+            }
+            default { }
+        }
         Invoke-Robocopy -Source $m.Src -Dest $m.Dst -ExtraArgs $extra
     }
 
@@ -328,7 +535,30 @@ if ($Mode -eq 'Restore') {
         Write-Host "    Then securely wipe it:  cipher /w:`"$(Split-Path $csv)`"" -ForegroundColor Yellow
     }
 
-    Write-Host "`nRestore complete." -ForegroundColor Cyan
+    Write-Host "`n[Microsoft Edge]" -ForegroundColor Green
+    $edgeRestore = Join-Path $BackupPath 'Microsoft Backup'
+    if (Test-Path -LiteralPath $edgeRestore) {
+        Write-Host "  PRIMARY: open Edge, sign into the client's Microsoft account, turn on Sync." -ForegroundColor White
+        Write-Host "  Bookmarks, passwords, autofill, extensions come down automatically." -ForegroundColor DarkGray
+        $edgeJsons = Get-ChildItem -LiteralPath $edgeRestore -Filter '*_Bookmarks.json' -ErrorAction SilentlyContinue
+        if ($edgeJsons) {
+            Write-Host "  FALLBACK (no MS account): bookmarks JSON snapshots are saved at:" -ForegroundColor DarkGray
+            foreach ($j in $edgeJsons) { Write-Host "    $($j.FullName)" -ForegroundColor White }
+            Write-Host "    Import via edge://favorites if you need a manual recovery path." -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host "  No Microsoft Backup folder found - either Edge was skipped at backup, or this is a pre-v2.8 backup." -ForegroundColor DarkGray
+    }
+
+    Write-Host ""
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host "                  R E S T O R E   C O M P L E T E            " -ForegroundColor Green
+    Write-Host "============================================================" -ForegroundColor Green
+    Write-Host "  Restored from: $BackupPath" -ForegroundColor DarkGray
+    Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
+
+    Write-Host "Press any key to close this window..." -ForegroundColor DarkGray
+    try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
 }
 #endregion
