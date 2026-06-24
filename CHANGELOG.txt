@@ -4,6 +4,30 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.8  - 2026-06-24  - GUI emoji icons + Migration Edge support
+  * GUI: every row now renders the emoji icon from the manifest "icon" field
+    (FontFamily forced to Segoe UI Emoji so PS 5.1 / WPF picks colour glyphs
+    reliably). Destructive tools (currently Reset to OOBE) also get a small
+    crimson "DESTRUCTIVE" pill badge next to the name in addition to the
+    existing red text. Faster visual scanning + stronger safety signal.
+  * Migration: full Microsoft Edge backup parallel to the existing Chrome
+    logic - Bookmarks JSON by default, with optional -BrowserProfileDepth
+    Settings (+ Preferences, Web Data, Favorites) or Full (whole profile
+    minus GPU/code caches) for deeper backups. Edge restore section mirrors
+    Chrome's sign-in + Sync guidance.
+  * Migration restore safety: before each folder copy, if the destination is
+    non-empty the tech is prompted Skip / Overwrite / Merge per folder
+    (default Prompt; scriptable via -RestoreAction Overwrite|Merge|Skip).
+    Merge mode adds robocopy /XC /XN /XO so existing files are never touched
+    and only new files are added.
+  * Migration heartbeat: every robocopy step + the Defender post-scan now
+    run in a background job with a live Write-Progress bar + "still copying
+    (mm:ss elapsed)" heartbeat every 10 seconds. Large Documents folders
+    and the post-backup scan no longer look hung.
+  * Migration finish: prominent green "BACKUP COMPLETE" / "RESTORE COMPLETE"
+    banner at the end so the tech can't miss the wrap-up, plus a "press any
+    key to close" pause so the window doesn't auto-dismiss the summary.
+
 v2.7  - 2026-06-23  - DISM standalone tool
   * New menu item "DISM": runs the full DISM + SFC health pass in sequence -
     CheckHealth (baseline) -> ScanHealth (deep scan) -> RestoreHealth (only
