@@ -4,6 +4,23 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.9  - 2026-06-24  - Sync Drives tool + menu reorder
+  * New menu item "Sync Drives": two-way folder/drive synchronizer with
+    trash-safety - nothing hard-deleted, replaced/removed files go to a
+    dated _SyncTrash folder per drive. State tracking on two-way runs
+    correctly distinguishes "added here" from "deleted there" between
+    runs. Three modes:
+      - Two-way (default): both drives kept in sync, newer file wins
+      - One-way mirror: source authoritative, destination becomes a copy
+      - Additive: copy new/updated only, never delete on destination
+  * Sync Drives includes an interactive drive picker (lists connected
+    drives with size + free space + label; accepts a letter or pasted
+    folder path), a dry-run mode that previews then offers to re-run for
+    real, and per-run log + state file on Drive A.
+  * Menu reorder: Save PDF to Desktop promoted to slot 2 under
+    Diagnostics (workflow: run diagnostics, then convert the HTML report
+    to PDF). Everything else slides down one, Sync Drives lands at 8.
+
 v2.8  - 2026-06-24  - GUI emoji icons + Migration Edge support
   * GUI: every row now renders the emoji icon from the manifest "icon" field
     (FontFamily forced to Segoe UI Emoji so PS 5.1 / WPF picks colour glyphs
