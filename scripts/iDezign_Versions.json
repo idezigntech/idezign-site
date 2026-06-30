@@ -1,15 +1,14 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
   "manifestUpdated": "2026-06-30",
-  "toolkitVersion": "2.9.2",
+  "toolkitVersion": "3.0",
   "scripts": {
     "iDezign_Common.psm1": "2026.06.01-v2.5-stage-manifest",
     "iDezign_Cleanup_Utility.ps1": "2026.06.02-allprofiles",
     "iDezign_Diagnostics.ps1": "2026.06.01-v2.5-driver-updates",
-    "iDezign_Remediation.ps1": "2026.05.25-feedback-svcfilter",
+    "iDezign_Remediation.ps1": "2026.06.30-v3.0-pdf-merge",
     "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
     "iDezign_Toolkit_GUI.ps1": "2026.06.29-gui-v2.9.1-bigwindow",
-    "iDezign_SavePDF.ps1": "2026.05.25-savepdf-v1",
     "iDezign_Migration_Utility.ps1": "2026.06.24-migrate-v2.1-heartbeat",
     "iDezign_DISM.ps1": "2026.06.23-dism-v1.1",
     "iDezign_SyncDrives.ps1": "2026.06.24-syncdrives-v1.1"
@@ -25,40 +24,31 @@
       "order": 1
     },
     {
-      "key": "SavePDF",
-      "displayName": "Save PDF to Desktop",
-      "subtitle": "Latest Diagnostics report → PDF",
-      "icon": "📄",
-      "scriptFile": "iDezign_SavePDF.ps1",
-      "destructive": false,
-      "order": 2
-    },
-    {
       "key": "Cleanup",
       "displayName": "Cleanup",
       "subtitle": "Maintenance + imaging prep",
       "icon": "🧹",
       "scriptFile": "iDezign_Cleanup_Utility.ps1",
       "destructive": false,
-      "order": 3
+      "order": 2
     },
     {
       "key": "Remediation",
       "displayName": "Remediation",
-      "subtitle": "Interactive issue fixer",
+      "subtitle": "Interactive fixer + optional combined PDF",
       "icon": "🔧",
       "scriptFile": "iDezign_Remediation.ps1",
       "destructive": false,
-      "order": 4
+      "order": 3
     },
     {
       "key": "Migrate",
       "displayName": "Migrate",
       "subtitle": "Back up + move user data",
-      "icon": "📦",
+      "icon": "🪿",
       "scriptFile": "iDezign_Migration_Utility.ps1",
       "destructive": false,
-      "order": 5
+      "order": 4
     },
     {
       "key": "DISM",
@@ -67,7 +57,7 @@
       "icon": "🩺",
       "scriptFile": "iDezign_DISM.ps1",
       "destructive": false,
-      "order": 6
+      "order": 5
     },
     {
       "key": "SyncDrives",
@@ -76,7 +66,7 @@
       "icon": "🔄",
       "scriptFile": "iDezign_SyncDrives.ps1",
       "destructive": false,
-      "order": 7
+      "order": 6
     },
     {
       "key": "Reset",
@@ -85,7 +75,7 @@
       "icon": "⚠",
       "scriptFile": "iDezign_Reset_to_OOBE.ps1",
       "destructive": true,
-      "order": 8
+      "order": 7
     }
   ]
 }

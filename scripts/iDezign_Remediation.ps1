@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.05.25-feedback-svcfilter'
+$ScriptVersion = '2026.06.30-v3.0-pdf-merge'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -1343,6 +1343,164 @@ Write-Host "    $ActionLog"
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# ============================================================================
+# v3.0: Optional combined Diagnostics + Remediation PDF (merged from old
+# iDezign_SavePDF.ps1). Asks Y/N. If Y, builds a single HTML document with
+# the latest Diagnostics report (from C:\iDezign_Diagnostics) followed by
+# the Remediation actions log, then converts to PDF via Edge headless.
+# Saves to Desktop with computer name + timestamp in the filename.
+# ============================================================================
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  Save service report as PDF (Diagnostics + Remediation)" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host ""
+$pdfAns = Read-Host "  Save combined report as PDF on Desktop? (Y/N)"
+if ($pdfAns -match '^(?i)y') {
+    # --- Locate Microsoft Edge (the PDF engine) ----------------------------
+    $edgeCandidates = @(
+        (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe')
+    )
+    if (${env:ProgramFiles(x86)}) {
+        $edgeCandidates += (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe')
+    }
+    $edge = $edgeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $edge) {
+        Write-Host "  Microsoft Edge was not found - cannot create PDF." -ForegroundColor Yellow
+        Write-Host "  (Edge ships with Windows 10/11; this machine may be unusual.)" -ForegroundColor DarkGray
+    } else {
+        # --- Find latest Diagnostics report --------------------------------
+        $diagHtmlPath = Join-Path $DiagDir 'Diagnostics_Latest.html'
+        if (-not (Test-Path $diagHtmlPath)) {
+            $newest = Get-ChildItem -Path (Join-Path $DiagDir 'Diagnostics_*.html') -ErrorAction SilentlyContinue |
+                      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($newest) { $diagHtmlPath = $newest.FullName }
+        }
+        $hasDiag = Test-Path $diagHtmlPath
+        if ($hasDiag) {
+            Write-Host "  Diagnostics source : $diagHtmlPath" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  No Diagnostics report found in $DiagDir." -ForegroundColor Yellow
+            Write-Host "  PDF will contain Remediation log only." -ForegroundColor Yellow
+        }
+
+        # --- Extract Diagnostics body + styles -----------------------------
+        $diagBody   = ''
+        $diagStyles = ''
+        if ($hasDiag) {
+            try {
+                $diagContent = Get-Content -Raw -Path $diagHtmlPath -Encoding UTF8
+                if ($diagContent -match '(?si)<body[^>]*>(.*?)</body>') { $diagBody   = $matches[1] }
+                if ($diagContent -match '(?si)<style[^>]*>(.*?)</style>') { $diagStyles = $matches[1] }
+            } catch {
+                Write-Host "  WARN: could not parse Diagnostics HTML: $($_.Exception.Message)" -ForegroundColor Yellow
+                $hasDiag = $false
+            }
+        }
+
+        # --- Escape Remediation log lines for HTML -------------------------
+        $remHtmlContent = ($logLines | ForEach-Object {
+            ($_ -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;')
+        }) -join "`r`n"
+
+        # --- Build combined HTML ------------------------------------------
+        $coverDate = (Get-Date -Format 'yyyy-MM-dd HH:mm')
+        $partLabel = if ($hasDiag) { 'Part 2 - ' } else { '' }
+
+        $sb = New-Object System.Text.StringBuilder
+        [void]$sb.AppendLine('<!DOCTYPE html>')
+        [void]$sb.AppendLine('<html lang="en">')
+        [void]$sb.AppendLine('<head>')
+        [void]$sb.AppendLine('<meta charset="utf-8">')
+        [void]$sb.AppendLine("<title>iDezign Service Report - $env:COMPUTERNAME</title>")
+        [void]$sb.AppendLine('<style>')
+        [void]$sb.AppendLine($diagStyles)
+        [void]$sb.AppendLine('
+/* Combined report overrides */
+body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+.report-cover { page-break-after: always; padding: 60px 40px; text-align: center; border-bottom: 4px solid #A82828; }
+.report-cover h1 { color: #A82828; font-size: 36px; margin-bottom: 16px; }
+.report-cover .meta { color: #555; font-size: 14px; line-height: 1.8; }
+.section-header { page-break-before: always; padding: 20px 40px; background: #A82828; color: white; margin: 0; }
+.section-header h1 { font-size: 24px; margin: 0; color: white; }
+.remediation-log { font-family: "Consolas", "Courier New", monospace; font-size: 11px; white-space: pre-wrap; background: #f8f8f8; padding: 20px 40px; border-left: 4px solid #A82828; margin: 0; }
+.remediation-summary { padding: 20px 40px; }
+.remediation-summary strong { color: #A82828; }
+')
+        [void]$sb.AppendLine('</style>')
+        [void]$sb.AppendLine('</head>')
+        [void]$sb.AppendLine('<body>')
+        [void]$sb.AppendLine('<div class="report-cover">')
+        [void]$sb.AppendLine('<h1>iDezign Service Report</h1>')
+        [void]$sb.AppendLine('<div class="meta">')
+        [void]$sb.AppendLine("<p><strong>Computer:</strong> $env:COMPUTERNAME</p>")
+        [void]$sb.AppendLine("<p><strong>User:</strong> $env:USERNAME</p>")
+        [void]$sb.AppendLine("<p><strong>Generated:</strong> $coverDate</p>")
+        [void]$sb.AppendLine("<p><strong>Remediation v$ScriptVersion</strong></p>")
+        [void]$sb.AppendLine('</div>')
+        [void]$sb.AppendLine('</div>')
+        if ($hasDiag) {
+            [void]$sb.AppendLine('<div class="section-header"><h1>Part 1 - Diagnostics</h1></div>')
+            [void]$sb.AppendLine($diagBody)
+        }
+        [void]$sb.AppendLine("<div class=`"section-header`"><h1>${partLabel}Remediation Actions</h1></div>")
+        [void]$sb.AppendLine('<div class="remediation-summary">')
+        [void]$sb.AppendLine("<p><strong>Actions taken:</strong> $script:ActionsTaken</p>")
+        [void]$sb.AppendLine("<p><strong>Actions skipped:</strong> $script:ActionsSkipped</p>")
+        [void]$sb.AppendLine("<p><strong>Recommendations logged:</strong> $script:Recommendations</p>")
+        [void]$sb.AppendLine('</div>')
+        [void]$sb.AppendLine("<pre class=`"remediation-log`">$remHtmlContent</pre>")
+        [void]$sb.AppendLine('</body>')
+        [void]$sb.AppendLine('</html>')
+
+        # --- Save combined HTML to temp -----------------------------------
+        $tempHtml = Join-Path $env:TEMP "iDezign_ServiceReport_$Timestamp.html"
+        Set-Content -Path $tempHtml -Value $sb.ToString() -Encoding UTF8
+
+        # --- Build PDF path on Desktop ------------------------------------
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $pdf     = Join-Path $desktop ("iDezign_ServiceReport_{0}_{1}.pdf" -f $env:COMPUTERNAME, $Timestamp)
+        $uri     = 'file:///' + ($tempHtml -replace '\\','/')
+
+        Write-Host "  Output : $pdf" -ForegroundColor DarkGray
+        Write-Host "  Creating PDF (Edge headless)..." -ForegroundColor Cyan
+
+        try {
+            Start-Process -FilePath $edge -Wait -WindowStyle Hidden -ArgumentList @(
+                '--headless',
+                '--disable-gpu',
+                '--no-first-run',
+                ('--print-to-pdf="{0}"' -f $pdf),
+                ('"{0}"' -f $uri)
+            )
+        } catch {
+            Write-Host "  ERROR launching Edge: $($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        # Edge headless can finish writing a moment after exit - wait briefly.
+        $tries = 0
+        while (-not (Test-Path $pdf) -and $tries -lt 20) { Start-Sleep -Milliseconds 250; $tries++ }
+
+        Write-Host ""
+        if (Test-Path $pdf) {
+            $kb = [math]::Round((Get-Item $pdf).Length / 1KB, 0)
+            Write-Host "  SUCCESS - PDF saved to your Desktop:" -ForegroundColor Green
+            Write-Host "    $pdf  ($kb KB)" -ForegroundColor Green
+            try { Start-Process explorer.exe ('/select,"{0}"' -f $pdf) } catch { }
+        } else {
+            Write-Host "  PDF was not produced. Edge may have failed silently." -ForegroundColor Red
+            Write-Host "  You can open the source HTML and Print -> Save as PDF manually:" -ForegroundColor Yellow
+            Write-Host "    $tempHtml" -ForegroundColor DarkGray
+        }
+        # Note: temp HTML is left in place as a manual-fallback option.
+    }
+    Write-Host ""
+} else {
+    Write-Host "  Skipped (no PDF generated)." -ForegroundColor DarkGray
+    Write-Host ""
+}
 
 # Pause so the elevated PowerShell window doesn't auto-close on script exit.
 # (Run-Remediation.bat launches via Start-Process -Verb RunAs, which spawns a
