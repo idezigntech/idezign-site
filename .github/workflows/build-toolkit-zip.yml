@@ -167,17 +167,72 @@ jobs:
           echo "--- zip contents ---"
           unzip -l dist/iDezign-Toolkit.zip
 
-      - name: Commit zip back to main (if changed)
+      # ----------------------------------------------------------------
+      # v2.9.2 add-on: also build dist/iDezign-Toolkit.exe (a self-
+      # extracting EXE) alongside the zip. Double-click extracts the
+      # toolkit silently to %LOCALAPPDATA%\iDezign-Toolkit and runs
+      # the GUI. Both files ship with every release; users pick
+      # whichever suits their environment (.zip avoids SmartScreen
+      # warnings on first download but needs unzip-then-run; .exe is
+      # one-click but may trigger SmartScreen until reputation builds).
+      # ----------------------------------------------------------------
+      - name: Download 7-Zip Extra (for SFX module)
+        run: |
+          set -euo pipefail
+          cd /tmp
+          # 7-Zip Extra package contains 7zSD.sfx (silent self-extractor).
+          # Pinned to 24.08 for build reproducibility.
+          wget -q https://www.7-zip.org/a/7z2408-extra.7z -O 7z-extra.7z
+          mkdir -p /tmp/7z-sfx
+          7z x -y 7z-extra.7z 7zSD.sfx -o/tmp/7z-sfx
+          ls -la /tmp/7z-sfx/
+
+      - name: Build self-extracting EXE
+        run: |
+          set -euo pipefail
+          STAGE=$(cat /tmp/stage_path)
+
+          # Pack the staged toolkit files into a .7z archive (max compression)
+          rm -f /tmp/toolkit-inner.7z
+          (cd "$STAGE" && 7z a -mx=9 /tmp/toolkit-inner.7z .)
+
+          # SFX configuration block
+          #   Directory     - extracts to per-user LocalAppData (no admin)
+          #   RunProgram    - launches the .bat after extraction
+          #   GUIMode 2     - silent (no extraction dialog)
+          #   OverwriteMode - overwrite without prompt (re-runs upgrade in place)
+          cat > /tmp/sfxconfig.txt << 'CONFEOF'
+          ;!@Install@!UTF-8!
+          Title="iDezign Toolkit"
+          BeginPrompt=""
+          Progress="hidden"
+          Directory="%LOCALAPPDATA%\\iDezign-Toolkit"
+          RunProgram="\"iDezign TOOLKIT.bat\""
+          GUIMode="2"
+          OverwriteMode="1"
+          ;!@InstallEnd@!
+          CONFEOF
+
+          # Concatenate: SFX stub + config + 7z archive = Windows .exe
+          mkdir -p dist
+          rm -f dist/iDezign-Toolkit.exe
+          cat /tmp/7z-sfx/7zSD.sfx /tmp/sfxconfig.txt /tmp/toolkit-inner.7z > dist/iDezign-Toolkit.exe
+
+          echo "--- Built .exe ---"
+          ls -la dist/iDezign-Toolkit.exe
+          file dist/iDezign-Toolkit.exe
+
+      - name: Commit zip + exe back to main (if changed)
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- dist/iDezign-Toolkit.zip; then
-            echo "dist/iDezign-Toolkit.zip is unchanged \u2014 nothing to commit."
+          if git diff --quiet -- dist/iDezign-Toolkit.zip dist/iDezign-Toolkit.exe; then
+            echo "dist/ assets unchanged \u2014 nothing to commit."
             exit 0
           fi
 
-          git add dist/iDezign-Toolkit.zip
-          git commit -m "chore(toolkit): rebuild zip (v${{ steps.ver.outputs.version }})"
+          git add dist/iDezign-Toolkit.zip dist/iDezign-Toolkit.exe
+          git commit -m "chore(toolkit): rebuild zip + exe (v${{ steps.ver.outputs.version }})"
           git push
