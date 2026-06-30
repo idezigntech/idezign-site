@@ -184,8 +184,7 @@ jobs:
           # community-maintained source. Pinned to 1.7.1.3901 for repro.
           # The release ships a .7z archive containing the SFX modules.
           mkdir -p /tmp/7z-sfx-dl /tmp/7z-sfx
-          curl -fL --retry 3 -o /tmp/7z-sfx-dl/sfx.7z \\
-            https://github.com/chrislake/7zsfxmm/releases/download/1.7.1.3901/7zsd_171_3901.7z
+          curl -fL --retry 3 -o /tmp/7z-sfx-dl/sfx.7z https://github.com/chrislake/7zsfxmm/releases/download/1.7.1.3901/7zsd_171_3901.7z
           7z x -y /tmp/7z-sfx-dl/sfx.7z -o/tmp/7z-sfx
           echo "--- Extracted contents ---"
           find /tmp/7z-sfx -type f | head -20
