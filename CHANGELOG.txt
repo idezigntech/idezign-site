@@ -4,6 +4,24 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.9.2 - 2026-06-30 - One-click .exe download (NSIS-based)
+  * Toolkit now ships as both a portable .exe AND the existing .zip.
+    Double-click the .exe and it silently extracts to %LOCALAPPDATA%\
+    iDezign-Toolkit and auto-runs the launcher. No prior installation,
+    no admin needed for the extract step itself, fully portable.
+  * Behind the scenes: the .exe is built by NSIS (Nullsoft Scriptable
+    Install System), the actively-maintained Windows installer maker
+    used by Steam, OBS, Filezilla, and thousands of other Windows apps
+    since 1995. Initial attempts used chrislake/7zsfxmm (a 2017 SFX
+    module) which silently failed to extract on Windows 11 25H2 due
+    to Smart App Control + tighter unsigned-EXE rules introduced in
+    that build.
+  * Both downloads now visible on idezign.ai/toolkit/: .exe is the
+    primary one-click option; .zip remains the fallback for AppLocker-
+    restricted environments where unsigned .exe extraction is blocked.
+  * CI pipeline now builds and commits BOTH dist/iDezign-Toolkit.zip
+    and dist/iDezign-Toolkit.exe on every release. Zero manual steps.
+
 v2.9.1 - 2026-06-29 - Launcher .bat + Sync Drives parse fix; bigger GUI window
   * iDezign_SyncDrives.ps1: fixed a parse error introduced in v2.9. The
     $ScriptVersion assignment was placed BEFORE the param() block, which
