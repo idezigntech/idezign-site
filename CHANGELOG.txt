@@ -4,6 +4,39 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v2.9.1 - 2026-06-29 - Launcher .bat + Sync Drives parse fix; bigger GUI window
+  * iDezign_SyncDrives.ps1: fixed a parse error introduced in v2.9. The
+    $ScriptVersion assignment was placed BEFORE the param() block, which
+    makes PowerShell reject [CmdletBinding()] and refuse to load the
+    script. The Sync Drives menu item appeared to "do nothing" - the
+    elevated PS window opened, hit the parse error, and exited before
+    the user could read the message. Moved $ScriptVersion AFTER param()
+    (the only valid placement when a script takes parameters) and added
+    a comment so the next person doesn't repeat the mistake.
+  * iDezign_SyncDrives.ps1: added a "Press Enter to close" pause at the
+    end so success summaries and errors stay visible when the script is
+    launched from the GUI (which doesn't pass -NoExit).
+  * iDezign TOOLKIT.bat: rewrote control flow to use goto labels
+    instead of "if (...) else (...)" blocks. CMD's IF/ELSE block parser
+    misreads parentheses inside a quoted path - so when the script
+    lived in a folder named, say, "iDezign-Toolkit (7)" (the default
+    name after a second GitHub-zip extract), the old version silently
+    failed. goto-based control flow is immune to that.
+  * iDezign TOOLKIT.bat: dropped -WindowStyle Hidden from the elevated
+    relaunch. Some AppLocker default rule sets and Smart App Control
+    silently kill elevated PowerShell launched with -WindowStyle Hidden
+    (it's a known malware-loader pattern). A visible console window
+    adds a half-second flash but launches cleanly under those policies.
+  * iDezign_Toolkit_GUI.ps1: window Height bumped 480 -> 700 so all 8
+    tools display without scrolling.
+  * Menu reorder: Reset-to-OOBE moved from slot 5 to slot 8 (bottom).
+    Most-destructive-on-the-bottom is a deliberate friction pattern -
+    same reason "Delete account" lives at the bottom of every settings
+    page on every major web app.
+  * Real-world impact: launcher now works cleanly on machines with
+    AppLocker enabled, in folders with parens in the path, and the
+    menu layout puts dangerous operations behind a deliberate scan.
+
 v2.9  - 2026-06-24  - Sync Drives tool + menu reorder
   * New menu item "Sync Drives": two-way folder/drive synchronizer with
     trash-safety - nothing hard-deleted, replaced/removed files go to a
