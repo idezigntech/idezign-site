@@ -150,6 +150,12 @@ jobs:
           cp logos/iDezign-ai-logo-v2-transparent.png "$STAGE/"
           cp logos/iDezign-logo-trim.png "$STAGE/"
 
+          # Tiny launcher.cmd for the SFX RunProgram (no space in filename,
+          # avoids chrislake SFX quote-escaping issues with "iDezign TOOLKIT.bat").
+          # When the SFX extracts to %LOCALAPPDATA%, it runs this; this script
+          # then calls the actual .bat which handles UAC elevation.
+          printf '%s\r\n' '@echo off' 'cd /d "%~dp0"' 'call "iDezign TOOLKIT.bat"' > "$STAGE/launcher.cmd"
+
           # Changelog (so end users see what changed)
           cp CHANGELOG.txt "$STAGE/"
 
@@ -230,7 +236,7 @@ jobs:
           Title="iDezign Toolkit"
           Progress="no"
           Directory="%LOCALAPPDATA%\\iDezign-Toolkit"
-          RunProgram="\"iDezign TOOLKIT.bat\""
+          RunProgram="launcher.cmd"iDezign TOOLKIT.bat\""
           GUIMode="2"
           OverwriteMode="1"
           ;!@InstallEnd@!
