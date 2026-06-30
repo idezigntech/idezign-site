@@ -200,26 +200,13 @@ jobs:
           rm -f /tmp/toolkit-inner.7z
           (cd "$STAGE" && 7z a -mx=9 /tmp/toolkit-inner.7z .)
 
-          # Locate the silent SFX module. Filenames vary by 7-Zip version;
-          # 7zSD.sfx was canonical for years, 7zS.sfx is the fallback.
-          SFX=""
-          for cand in 7zSD.sfx 7zS.sfx 7zsd.sfx 7zs.sfx; do
-            found=$(find /tmp/7z-sfx -type f -name "$cand" | head -1)
-            if [ -n "$found" ]; then
-              SFX="$found"
-              echo "Selected SFX module: $cand -> $found"
-              break
-            fi
-          done
-          if [ -z "$SFX" ]; then
-            SFX=$(find /tmp/7z-sfx -type f -iname '*.sfx' | head -1)
-            if [ -z "$SFX" ]; then
-              echo "ERROR: no SFX module found in /tmp/7z-sfx"
-              find /tmp/7z-sfx -type f
-              exit 1
-            fi
-            echo "Fallback SFX module: $SFX"
+          # SFX module is pre-downloaded by the previous step
+          SFX="/tmp/7z-sfx/7zsd_All_x64.sfx"
+          if [ ! -f "$SFX" ]; then
+            echo "ERROR: SFX module missing at $SFX"
+            exit 1
           fi
+          echo "Using SFX: $SFX"
 
           # SFX configuration block
           #   Directory     - extracts to per-user LocalAppData (no admin)
