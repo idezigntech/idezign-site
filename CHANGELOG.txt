@@ -4,6 +4,40 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.0 - 2026-06-30 - Major: Remediation + Save PDF consolidated, Migration goose
+  * MENU CONSOLIDATION (the "major" in this major bump): "Save PDF to
+    Desktop" is no longer a standalone menu item. Its functionality is now
+    integrated into Remediation: at the end of Remediation, you are asked
+    Y/N to save a combined Diagnostics + Remediation report as PDF on the
+    Desktop. Single workflow, single output PDF for the client, one less
+    menu item.
+  * iDezign_Remediation.ps1: new end-of-run section builds a combined HTML
+    (cover page + Diagnostics report body + Remediation summary + actions
+    log) and converts it to PDF via Edge headless. Output filename is
+    iDezign_ServiceReport_<computer>_<timestamp>.pdf, saved to the Desktop.
+    The temp source HTML is left in %TEMP% as a manual-fallback option if
+    Edge fails for any reason (open in any browser, Print -> Save as PDF).
+  * iDezign_Remediation.ps1: behavior when no Diagnostics report is present
+    - the PDF still produces, containing just the Remediation summary +
+    actions log. Useful when Remediation was run without Diagnostics first.
+  * iDezign_SavePDF.ps1: DELETED. Its logic now lives inside Remediation.
+    Tech debt going down, not up.
+  * Migration icon: 📦 (package) -> 🪿 (goose). On-theme: migrating geese
+    fly south. Requires Unicode 15.0+ glyphs in the system emoji font
+    (Windows 11 ships these; older Windows 10 builds may show a fallback).
+  * Menu after v3.0 (7 tools, OOBE remains at the bottom):
+      1. 🔍 Diagnostics
+      2. 🧹 Cleanup
+      3. 🔧 Remediation        (now produces optional combined PDF)
+      4. 🪿 Migrate              (was 📦)
+      5. 🩺 DISM
+      6. 🔄 Sync Drives
+      7. ⚠ Reset to OOBE       [DESTRUCTIVE]
+  * Version-bump rationale: per the convention at the top of this file,
+    x.0 is a major bump for big changes. Removing a menu item and merging
+    its behavior into another is a structural change to the toolkit's
+    surface area, so a major bump fits.
+
 v2.9.2 - 2026-06-30 - One-click .exe download (NSIS-based)
   * Toolkit now ships as both a portable .exe AND the existing .zip.
     Double-click the .exe and it silently extracts to %LOCALAPPDATA%\
