@@ -181,8 +181,10 @@ jobs:
           set -euo pipefail
           cd /tmp
           # 7-Zip Extra package contains 7zSD.sfx (silent self-extractor).
-          # Pinned to 24.08 for build reproducibility.
-          wget -q https://www.7-zip.org/a/7z2408-extra.7z -O 7z-extra.7z
+          # Pinned to 26.02 (current as of 2026-06-25). 7-Zip moved hosting
+          # to GitHub for newer versions; older /a/ URLs were retired.
+          curl -fL --retry 3 -o 7z-extra.7z \
+            https://github.com/ip7z/7zip/releases/download/26.02/7z2602-extra.7z
           mkdir -p /tmp/7z-sfx
           7z x -y 7z-extra.7z 7zSD.sfx -o/tmp/7z-sfx
           ls -la /tmp/7z-sfx/
