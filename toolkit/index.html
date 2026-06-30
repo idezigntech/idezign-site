@@ -206,6 +206,7 @@ footer .top{flex-direction:column}
 <span class="badge ver">v2.9.1</span>
 </div>
 <p class="desc">A single launcher for the PowerShell tools I lean on for diagnostics, cleanup, and migrations. Each tool runs in its own elevated window — self-staging, so it works straight off a USB stick.</p>
+<div class="trust" style="display:flex;flex-wrap:wrap;gap:18px;margin:0 0 24px;font-size:13px;color:var(--muted);font-weight:300"><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> No install</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> Portable / USB</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> No telemetry</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> Auto-update check</span></div>
 <ul class="feats">
 <li><span class="k">🔍</span><span class="t"><b>Diagnostics</b> &nbsp;<span>— health check + HTML report</span></span></li>
 <li><span class="k">📄</span><span class="t"><b>Save PDF</b> &nbsp;<span>— latest report to a dated PDF</span></span></li>
@@ -214,7 +215,7 @@ footer .top{flex-direction:column}
 <li><span class="k">📦</span><span class="t"><b>Migrate</b> &nbsp;<span>— back up + move user data</span></span></li>
 <li><span class="k">🩺</span><span class="t"><b>DISM</b> &nbsp;<span>— component store + SFC repair</span></span></li>
 <li><span class="k">🔄</span><span class="t"><b>Sync Drives</b> &nbsp;<span>— two-way folder sync, trash-safe</span></span></li>
-<li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> &nbsp;<span>— sysprep for imaging</span></span></li>
+<li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span> &nbsp;<span>— sysprep for imaging</span></span></li>
 </ul>
 <div class="foot">
 <a href="/dist/iDezign-Toolkit.zip" class="btn-primary" download>Download .zip &nbsp;↓</a>
@@ -360,5 +361,28 @@ Chrome blocking the download? <a href="https://github.com/idezigntech/idezign-si
 </div>
 </div>
 </footer>
+<script>
+(function(){
+fetch("https://raw.githubusercontent.com/idezigntech/idezign-site/main/scripts/iDezign_Versions.json",{cache:"no-store"})
+.then(function(r){return r.ok?r.json():null})
+.then(function(mf){
+if(!mf)return;
+var ul=document.querySelector(".tool .feats");
+if(ul && mf.tools && mf.tools.length){
+var s=mf.tools.slice().sort(function(a,b){return (a.order||0)-(b.order||0);});
+ul.innerHTML=s.map(function(t){
+var icon=t.icon||"→";
+var name=t.displayName||t.key;
+var sub=t.subtitle||"";
+var dt=t.destructive?' <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span>':'';
+return '<li><span class="k">'+icon+'</span><span class="t"><b>'+name+'</b>'+dt+' &nbsp;<span>— '+sub+'</span></span></li>';
+}).join("
+");
+}
+var b=document.querySelector(".tool .badge.ver");
+if(b && mf.toolkitVersion) b.textContent="v"+mf.toolkitVersion;
+}).catch(function(){});
+})();
+</script>
 </body>
 </html>
