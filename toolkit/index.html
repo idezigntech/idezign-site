@@ -287,7 +287,7 @@ Or <a href="/dist/iDezign-Toolkit.zip" download style="color:var(--red);border-b
 </footer>
 <script>
 (function(){
-fetch("https://raw.githubusercontent.com/idezigntech/idezign-site/main/scripts/iDezign_Versions.json",{cache:"no-store"})
+fetch("https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/iDezign_Versions.json?t="+Date.now(),{cache:"no-store"})
 .then(function(r){return r.ok?r.json():null})
 .then(function(mf){
 if(!mf)return;
