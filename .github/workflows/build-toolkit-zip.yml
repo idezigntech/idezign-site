@@ -235,7 +235,7 @@ jobs:
           ;!@Install@!UTF-8!
           Title="iDezign Toolkit"
           Progress="no"
-          Directory="%LOCALAPPDATA%\\iDezign-Toolkit"
+          Directory="%LOCALAPPDATA%\iDezign-Toolkit"
           RunProgram="launcher.cmd"
           GUIMode="2"
           OverwriteMode="1"
