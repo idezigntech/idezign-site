@@ -61,8 +61,6 @@
 ======================================================================
 #>
 
-$ScriptVersion = '2026.06.24-syncdrives-v1'
-
 [CmdletBinding()]
 param(
     # The two endpoints. Leave empty to be asked interactively.
@@ -86,6 +84,12 @@ param(
     # Slower, but catches files that changed without updating their date.
     [switch]$UseHash
 )
+
+# NOTE: $ScriptVersion MUST come AFTER the param() block. param() must be the
+# FIRST executable statement in a PowerShell script (only comments and the
+# doc-block are allowed before it). Putting a string assignment before it
+# makes PS reject [CmdletBinding()] and the whole script fails to parse.
+$ScriptVersion = '2026.06.24-syncdrives-v1.1'
 
 # ---------------------------------------------------------------------
 # Settings
@@ -637,4 +641,12 @@ if ($DryRun) {
     }
 } else {
     Write-Log "Sync complete." "DO"
+}
+
+# Keep the window open when launched from the GUI (no -NoExit) so the user
+# can read the summary or any error before it vanishes.
+if ([Environment]::UserInteractive) {
+    Write-Host ""
+    Write-Host "Press Enter to close..." -ForegroundColor DarkGray
+    [void](Read-Host)
 }

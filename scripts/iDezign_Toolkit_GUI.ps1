@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.06.24-gui-v2.8-icons'
+$ScriptVersion = '2026.06.29-gui-v2.9.1-bigwindow'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -110,7 +110,7 @@ Write-Diag ("manifest loaded: {0} tools, toolkit v{1}" -f $ToolDefs.Count, $Tool
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="iDezign Toolkit"
-        Height="480" Width="400"
+        Height="700" Width="400"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="True" Topmost="False"
         Background="#FFFFFF"
