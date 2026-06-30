@@ -100,6 +100,40 @@ jobs:
           print('All scripts match their manifest entries.')
           PYEOF
 
+      # ----------------------------------------------------------------
+      # v2.9.1 follow-up: the parse error that escaped to v2.9 (Sync
+      # Drives' $ScriptVersion was placed BEFORE param(), which makes
+      # PowerShell reject [CmdletBinding()] and refuse to load the
+      # script) would have been caught here. Parse every .ps1/.psm1 in
+      # scripts/ with the PowerShell language parser. Any syntax error
+      # fails the build BEFORE the zip is rebuilt.
+      # ----------------------------------------------------------------
+      - name: Parse-check every PowerShell script
+        shell: pwsh
+        run: |
+          $errors = 0
+          Get-ChildItem -Path scripts -File | Where-Object { $_.Extension -in '.ps1','.psm1' } | ForEach-Object {
+              $parseErrors = $null
+              $tokens = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+              if ($parseErrors.Count -gt 0) {
+                  $errors++
+                  Write-Host "FAIL: $($_.Name)" -ForegroundColor Red
+                  foreach ($e in $parseErrors) {
+                      Write-Host "  line $($e.Extent.StartLineNumber): $($e.Message)" -ForegroundColor Red
+                  }
+              } else {
+                  Write-Host "OK  : $($_.Name)" -ForegroundColor Green
+              }
+          }
+          if ($errors -gt 0) {
+              Write-Host ""
+              Write-Host "$errors script(s) failed to parse - aborting." -ForegroundColor Red
+              exit 1
+          }
+          Write-Host ""
+          Write-Host "All scripts parse cleanly." -ForegroundColor Green
+
       - name: Stage files for the zip
         run: |
           set -euo pipefail
