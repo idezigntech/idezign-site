@@ -181,9 +181,9 @@ jobs:
           set -euo pipefail
           cd /tmp
           # 7-Zip Extra package contains 7zSD.sfx (silent self-extractor).
-          # Pinned to 26.02 (2026-06-25). 7-Zip moved newer-version hosting to GitHub;
-          # the older /a/ URLs were retired.
-          wget -q https://github.com/ip7z/7zip/releases/download/26.02/7z2602-extra.7z -O 7z-extra.7z
+          # Pinned to 23.01 (stable, well-tested). The 24.x+ Extra packages dropped
+          # the SFX modules entirely; 23.01 still includes 7zSD.sfx which we need.
+          wget -q https://www.7-zip.org/a/7z2301-extra.7z -O 7z-extra.7z
           mkdir -p /tmp/7z-sfx
           # Extract the entire Extra package. SFX module filenames can vary
           # by 7-Zip version; the Build step auto-detects what's available.
