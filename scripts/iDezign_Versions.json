@@ -1,7 +1,7 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-06-29",
-  "toolkitVersion": "2.9.1",
+  "manifestUpdated": "2026-06-30",
+  "toolkitVersion": "2.9.2",
   "scripts": {
     "iDezign_Common.psm1": "2026.06.01-v2.5-stage-manifest",
     "iDezign_Cleanup_Utility.ps1": "2026.06.02-allprofiles",
@@ -19,7 +19,7 @@
       "key": "Diagnostics",
       "displayName": "Diagnostics",
       "subtitle": "Health check + HTML report",
-      "icon": "🔍",
+      "icon": "ð",
       "scriptFile": "iDezign_Diagnostics.ps1",
       "destructive": false,
       "order": 1
@@ -28,7 +28,7 @@
       "key": "SavePDF",
       "displayName": "Save PDF to Desktop",
       "subtitle": "Latest Diagnostics report -> PDF",
-      "icon": "📄",
+      "icon": "ð",
       "scriptFile": "iDezign_SavePDF.ps1",
       "destructive": false,
       "order": 2
@@ -37,7 +37,7 @@
       "key": "Cleanup",
       "displayName": "Cleanup",
       "subtitle": "Maintenance + imaging prep",
-      "icon": "🧹",
+      "icon": "ð§¹",
       "scriptFile": "iDezign_Cleanup_Utility.ps1",
       "destructive": false,
       "order": 3
@@ -46,7 +46,7 @@
       "key": "Remediation",
       "displayName": "Remediation",
       "subtitle": "Interactive issue fixer",
-      "icon": "🔧",
+      "icon": "ð§",
       "scriptFile": "iDezign_Remediation.ps1",
       "destructive": false,
       "order": 4
@@ -55,7 +55,7 @@
       "key": "Migrate",
       "displayName": "Migrate",
       "subtitle": "Back up + move user data",
-      "icon": "📦",
+      "icon": "ð¦",
       "scriptFile": "iDezign_Migration_Utility.ps1",
       "destructive": false,
       "order": 5
@@ -64,7 +64,7 @@
       "key": "DISM",
       "displayName": "DISM",
       "subtitle": "Component store + system file repair",
-      "icon": "🩺",
+      "icon": "ð©º",
       "scriptFile": "iDezign_DISM.ps1",
       "destructive": false,
       "order": 6
@@ -73,7 +73,7 @@
       "key": "SyncDrives",
       "displayName": "Sync Drives",
       "subtitle": "Safe two-way folder sync (trash-backed)",
-      "icon": "🔄",
+      "icon": "ð",
       "scriptFile": "iDezign_SyncDrives.ps1",
       "destructive": false,
       "order": 7
@@ -82,7 +82,7 @@
       "key": "Reset",
       "displayName": "Reset to OOBE",
       "subtitle": "Sysprep for imaging (destructive)",
-      "icon": "⚠",
+      "icon": "â ",
       "scriptFile": "iDezign_Reset_to_OOBE.ps1",
       "destructive": true,
       "order": 8
