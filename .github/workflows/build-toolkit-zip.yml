@@ -228,8 +228,7 @@ jobs:
           cat > /tmp/sfxconfig.txt << 'CONFEOF'
           ;!@Install@!UTF-8!
           Title="iDezign Toolkit"
-          BeginPrompt=""
-          Progress="hidden"
+          Progress="no"
           Directory="%LOCALAPPDATA%\\iDezign-Toolkit"
           RunProgram="\"iDezign TOOLKIT.bat\""
           GUIMode="2"
