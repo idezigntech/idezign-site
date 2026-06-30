@@ -19,7 +19,7 @@
       "key": "Diagnostics",
       "displayName": "Diagnostics",
       "subtitle": "Health check + HTML report",
-      "icon": "ð",
+      "icon": "🔍",
       "scriptFile": "iDezign_Diagnostics.ps1",
       "destructive": false,
       "order": 1
@@ -27,8 +27,8 @@
     {
       "key": "SavePDF",
       "displayName": "Save PDF to Desktop",
-      "subtitle": "Latest Diagnostics report -> PDF",
-      "icon": "ð",
+      "subtitle": "Latest Diagnostics report → PDF",
+      "icon": "📄",
       "scriptFile": "iDezign_SavePDF.ps1",
       "destructive": false,
       "order": 2
@@ -37,7 +37,7 @@
       "key": "Cleanup",
       "displayName": "Cleanup",
       "subtitle": "Maintenance + imaging prep",
-      "icon": "ð§¹",
+      "icon": "🧹",
       "scriptFile": "iDezign_Cleanup_Utility.ps1",
       "destructive": false,
       "order": 3
@@ -46,7 +46,7 @@
       "key": "Remediation",
       "displayName": "Remediation",
       "subtitle": "Interactive issue fixer",
-      "icon": "ð§",
+      "icon": "🔧",
       "scriptFile": "iDezign_Remediation.ps1",
       "destructive": false,
       "order": 4
@@ -55,7 +55,7 @@
       "key": "Migrate",
       "displayName": "Migrate",
       "subtitle": "Back up + move user data",
-      "icon": "ð¦",
+      "icon": "📦",
       "scriptFile": "iDezign_Migration_Utility.ps1",
       "destructive": false,
       "order": 5
@@ -64,7 +64,7 @@
       "key": "DISM",
       "displayName": "DISM",
       "subtitle": "Component store + system file repair",
-      "icon": "ð©º",
+      "icon": "🩺",
       "scriptFile": "iDezign_DISM.ps1",
       "destructive": false,
       "order": 6
@@ -73,7 +73,7 @@
       "key": "SyncDrives",
       "displayName": "Sync Drives",
       "subtitle": "Safe two-way folder sync (trash-backed)",
-      "icon": "ð",
+      "icon": "🔄",
       "scriptFile": "iDezign_SyncDrives.ps1",
       "destructive": false,
       "order": 7
@@ -82,7 +82,7 @@
       "key": "Reset",
       "displayName": "Reset to OOBE",
       "subtitle": "Sysprep for imaging (destructive)",
-      "icon": "â ",
+      "icon": "⚠",
       "scriptFile": "iDezign_Reset_to_OOBE.ps1",
       "destructive": true,
       "order": 8
