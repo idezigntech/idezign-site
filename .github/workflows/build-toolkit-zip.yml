@@ -198,7 +198,7 @@ jobs:
 
           # Pack the staged toolkit files into a .7z archive (max compression)
           rm -f /tmp/toolkit-inner.7z
-          (cd "$STAGE" && 7z a -mx=9 /tmp/toolkit-inner.7z .)
+          (cd "$STAGE" && 7z a -mx=9 -m0=lzma /tmp/toolkit-inner.7z .)
 
           # Locate the silent SFX module. Prefer 64-bit silent variants.
           SFX=""
