@@ -1,0 +1,102 @@
+{
+  "_comment": "Website content that lives independently of the toolkit code. Currently drives the 'Also worth installing' tile grid on /toolkit/. To add a tile: append an entry to recommendedTools and commit - the site fetches this file from jsDelivr and re-renders. Category maps to badge color: branded=green, diagnostics=amber, productivity=blue, customization=purple, builtin=blue.",
+  "contentUpdated": "2026-07-01",
+  "recommendedTools": [
+    {
+      "name": "iDezign Help (TeamViewer)",
+      "url": "https://custom.teamviewer.com/idhelp",
+      "category": "branded",
+      "badgeText": "Branded",
+      "description": "Pre-branded remote-support download - runs as 'iDezign Help', not vanilla TeamViewer. The one you call me about.",
+      "meta": "custom.teamviewer.com/idhelp"
+    },
+    {
+      "name": "Advanced IP Scanner",
+      "url": "https://www.advanced-ip-scanner.com/download/",
+      "category": "diagnostics",
+      "badgeText": "Diagnostics",
+      "description": "Free LAN scanner. See every device on your network - IP, MAC, hostname, remote-in to PCs. Indispensable for network triage.",
+      "meta": "Famatech - Free"
+    },
+    {
+      "name": "Ninite",
+      "url": "https://ninite.com/",
+      "category": "diagnostics",
+      "badgeText": "Diagnostics",
+      "description": "Batch-install common freeware in one click - Chrome, VLC, 7-Zip, Notepad++, Zoom, etc. No bundled toolbars or junk.",
+      "meta": "Ninite - Free"
+    },
+    {
+      "name": "Brave Browser",
+      "url": "https://brave.com/download/",
+      "category": "productivity",
+      "badgeText": "Productivity",
+      "description": "Chromium-based browser with ad and tracker blocking built in. Faster pages, fewer popups, no extension juggling.",
+      "meta": "Brave Software - Free"
+    },
+    {
+      "name": "Google Drive for Desktop",
+      "url": "https://www.google.com/drive/download/",
+      "category": "productivity",
+      "badgeText": "Productivity",
+      "description": "Sync Drive to a folder on your PC. Open, edit, save Drive files like local files - no browser tab required.",
+      "meta": "Google - Free"
+    },
+    {
+      "name": "Open-Shell",
+      "url": "https://github.com/Open-Shell/Open-Shell-Menu/releases",
+      "category": "customization",
+      "badgeText": "Customization",
+      "description": "Classic Start menu for Windows 10 and 11. Bring back the simple, fast menu - full customization, no telemetry.",
+      "meta": "Open-Shell - Free / Open source"
+    },
+    {
+      "name": "Windows Update",
+      "url": "ms-settings:windowsupdate",
+      "category": "builtin",
+      "badgeText": "Built-in",
+      "description": "Opens Settings > Windows Update on this PC. Click 'Check for updates' from there. Keep Windows patched - most 'my computer is slow / weird' calls trace back to a missing update.",
+      "meta": "Microsoft - Built into Windows"
+    },
+    {
+      "name": "Dell Command | Update",
+      "url": "https://www.dell.com/support/kbdoc/en-us/000177325/dell-command-update",
+      "category": "drivers",
+      "badgeText": "Drivers",
+      "description": "Dell's own driver + BIOS updater for Dell hardware. What Diagnostics tries to install (via winget) and scan with. Install manually here if winget isn't available on the machine.",
+      "meta": "Dell - Free"
+    },
+    {
+      "name": "Intel Driver & Support Assistant",
+      "url": "https://www.intel.com/dsa",
+      "category": "drivers",
+      "badgeText": "Drivers",
+      "description": "Intel's driver checker for Intel CPU/GPU/NIC/WiFi/Bluetooth. Diagnostics points you here when it detects Intel silicon without DSA installed - grab it to keep chipset drivers current.",
+      "meta": "Intel - Free"
+    },
+    {
+      "name": "HP Support Assistant",
+      "url": "https://support.hp.com/us-en/help/hp-support-assistant",
+      "category": "drivers",
+      "badgeText": "Drivers",
+      "description": "HP's driver + firmware + diagnostics utility for HP hardware. Cleanup auto-installs it on HP machines. Grab it manually here if you're on HP but winget isn't available.",
+      "meta": "HP - Free"
+    },
+    {
+      "name": "Lenovo Vantage",
+      "url": "https://apps.microsoft.com/detail/9wzdncrfj4mv",
+      "category": "drivers",
+      "badgeText": "Drivers",
+      "description": "Lenovo's system control panel - drivers, warranty, battery health, hardware tuning. Cleanup auto-installs it from the Microsoft Store on Lenovo machines.",
+      "meta": "Lenovo - Free (Microsoft Store)"
+    },
+    {
+      "name": "Realtek Audio Console",
+      "url": "https://apps.microsoft.com/detail/9p71vc01sbtl",
+      "category": "drivers",
+      "badgeText": "Drivers",
+      "description": "The current audio control panel for Realtek codecs (successor to Realtek HD Audio Manager). Cleanup auto-installs it when Realtek audio hardware is detected.",
+      "meta": "Realtek - Free (Microsoft Store)"
+    }
+  ]
+}
