@@ -199,6 +199,10 @@ jobs:
           file dist/iDezign-Toolkit.exe
 
       - name: Commit zip + exe back to main (if changed)
+        # Only meaningful on branch triggers. On 'release: published', the
+        # runner is on a detached HEAD at the tag - git push has no branch
+        # to target, so we skip and let the release-upload step run.
+        if: github.event_name != 'release'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
