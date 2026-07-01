@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.06.30-v3.1-server-repair-fixes'
+$ScriptVersion = '2026.07.01-v3.1.1-tv-url'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -379,12 +379,12 @@ if (-not $ResumeAfterUpdate) {
     $doDownloadMWB = $answer -match '^(y|yes)$'
 
     # --- Install iDezign-branded TeamViewer Host ---
-    # The custom-branded URL get.teamviewer.com/idezign serves an EXE that
+    # The custom-branded URL custom.teamviewer.com/idhelp serves an EXE that
     # already has Eric's account/branding baked in. /S = silent install.
     # We install (not just download) because TV needs to be running on every
     # imaged machine so Eric has remote access. Unlike MWB, no license prompt.
     Write-Host ""
-    $answer = Read-Host "Install iDezign-branded TeamViewer Host (from get.teamviewer.com/idezign)? (Y/N)"
+    $answer = Read-Host "Install iDezign-branded TeamViewer Host (from custom.teamviewer.com/idhelp)? (Y/N)"
     $doInstallTV = $answer -match '^(y|yes)$'
 
     # --- Power settings ---
@@ -1248,13 +1248,13 @@ if ($doDownloadMWB) {
 }
 
 # --- 1e. TeamViewer iDezign-branded Host (silent install) ---
-# Downloads from get.teamviewer.com/idezign and runs with /S for silent install.
+# Downloads from custom.teamviewer.com/idhelp and runs with /S for silent install.
 # Server-aware: TV Host runs fine on Server SKUs (unlike Claude Desktop MSIX),
 # so no server gate here.
 if ($doInstallTV) {
     Write-Host "`n[Phase 1e] Installing iDezign-branded TeamViewer Host..." -ForegroundColor Green
 
-    $tvUrl  = 'https://get.teamviewer.com/idezign'
+    $tvUrl  = 'https://custom.teamviewer.com/idhelp'
     $tvExe  = Join-Path $StagingDir 'TeamViewer_Host_iDezign.exe'
 
     Write-Host "  Source: $tvUrl" -ForegroundColor DarkGray

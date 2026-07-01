@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped whenever the HTML report format changes.
 # Visible in the HTML report header so we can verify deployed version at a glance.
-$ScriptVersion = '2026.06.30-v3.1-repair-fallback'
+$ScriptVersion = '2026.07.01-v3.1.1-tv-url'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -1252,7 +1252,7 @@ Write-Host "    done." -ForegroundColor DarkGray
 #endregion
 
 #region --- 11. TeamViewer (iDezign branded host) ---------------------------
-# iDezign's branded TeamViewer Host comes from get.teamviewer.com/idezign.
+# iDezign's branded TeamViewer Host comes from custom.teamviewer.com/idhelp.
 # That installer is a "Custom Host" module, which means TeamViewer's MSI
 # stamps a CustomConfigID into the registry. If the value is present and
 # non-empty, we know it was a custom-branded install (vs someone manually
@@ -1337,16 +1337,16 @@ if ($tvRegFound -or $tvSvc -or $tvPaths) {
         $tvDetails += "  This is NOT the iDezign-branded TeamViewer Host."
         $tvDetails += "  To replace with the branded version:"
         $tvDetails += "    1. Uninstall current TeamViewer (Control Panel -> Programs)"
-        $tvDetails += "    2. Download branded host from: https://get.teamviewer.com/idezign"
+        $tvDetails += "    2. Download branded host from: https://custom.teamviewer.com/idhelp"
         $tvDetails += "    3. Run installer - it self-configures with iDezign settings"
         if ($tvVerdict -eq 'OK') { $tvVerdict = 'ATTENTION' }
-        $tvIssues += "TeamViewer present but not iDezign-branded - replace with get.teamviewer.com/idezign build"
+        $tvIssues += "TeamViewer present but not iDezign-branded - replace with custom.teamviewer.com/idhelp build"
     }
 
     $headline = if ($tvBranded) {
         "iDezign-branded TeamViewer Host installed (v$tvVersion, ID $tvClientID)"
     } elseif ($tvDetected) {
-        "TeamViewer installed but NOT branded - reinstall from get.teamviewer.com/idezign"
+        "TeamViewer installed but NOT branded - reinstall from custom.teamviewer.com/idhelp"
     } else {
         "TeamViewer not detected"
     }
@@ -1364,16 +1364,16 @@ if ($tvRegFound -or $tvSvc -or $tvPaths) {
 } else {
     # Servers often DO have TeamViewer Host so this is meaningful on both.
     Add-Finding -Section "TeamViewer" -Verdict 'ATTENTION' `
-                -Headline "TeamViewer not installed - install from get.teamviewer.com/idezign" `
+                -Headline "TeamViewer not installed - install from custom.teamviewer.com/idhelp" `
                 -Details @(
                     "No TeamViewer registry, service, or install path was found.",
                     "",
                     "Recommended action:",
-                    "  1. Browse to https://get.teamviewer.com/idezign",
+                    "  1. Browse to https://custom.teamviewer.com/idhelp",
                     "  2. Run the downloaded branded Host installer",
                     "  3. It will auto-configure with iDezign settings"
                 ) `
-                -Issues @("TeamViewer Host not installed - install from get.teamviewer.com/idezign for unattended access")
+                -Issues @("TeamViewer Host not installed - install from custom.teamviewer.com/idhelp for unattended access")
 
     $Snapshot['TeamViewer'] = @{ Installed = $false; Branded = $false }
 }

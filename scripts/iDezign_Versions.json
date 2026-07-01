@@ -1,11 +1,11 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-06-30",
-  "toolkitVersion": "3.1",
+  "manifestUpdated": "2026-07-01",
+  "toolkitVersion": "3.1.1",
   "scripts": {
     "iDezign_Common.psm1": "2026.06.30-v3.1-time-drift",
-    "iDezign_Cleanup_Utility.ps1": "2026.06.30-v3.1-server-repair-fixes",
-    "iDezign_Diagnostics.ps1": "2026.06.30-v3.1-repair-fallback",
+    "iDezign_Cleanup_Utility.ps1": "2026.07.01-v3.1.1-tv-url",
+    "iDezign_Diagnostics.ps1": "2026.07.01-v3.1.1-tv-url",
     "iDezign_Remediation.ps1": "2026.06.30-v3.0-pdf-merge",
     "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
     "iDezign_Toolkit_GUI.ps1": "2026.06.29-gui-v2.9.1-bigwindow",
