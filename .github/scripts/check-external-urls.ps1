@@ -60,8 +60,18 @@ foreach ($f in $files) {
 }
 
 # --- Skip patterns (URLs we don't want to probe) --------------------------
-# XML namespaces, schema URIs, and localhost are false positives.
+# Three categories of false-positive:
+#  (1) XML namespaces / schema URIs - these are namespace declarations, not
+#      resources. localhost and example.com follow the same shape.
+#  (2) Preconnect hint domains - domains referenced only via <link rel=
+#      "preconnect"> (fonts.googleapis.com, fonts.gstatic.com) legitimately
+#      404 on the bare URL because they don't serve a landing page. Real
+#      resource fetches happen at specific sub-paths that are captured
+#      separately if present.
+#  (3) Domain-only URLs to sites known to reject HEAD/GET at root
+#      (behind a Cloudflare 'protect the honeypot' rule etc.).
 $skipPatterns = @(
+    # (1) namespaces + localhost
     '^https?://localhost',
     '^https?://127\.0\.0\.1',
     'example\.com',
@@ -69,7 +79,11 @@ $skipPatterns = @(
     '^https?://schemas\.openxmlformats\.org',
     '^https?://www\.w3\.org',
     '^https?://schemas\.xmlsoap\.org',
-    '^https?://ns\.adobe\.com'
+    '^https?://ns\.adobe\.com',
+
+    # (2) preconnect hint domains (bare URL 404s but sub-paths work)
+    '^https?://fonts\.googleapis\.com/?$',
+    '^https?://fonts\.gstatic\.com/?$'
 )
 function Test-ShouldSkip {
     param([string]$Url)
@@ -176,6 +190,24 @@ if ($failed.Count -gt 0) {
     }
     Write-Host ""
     Write-Host "Fix any dead links above, then re-run the check." -ForegroundColor Yellow
+
+    # Write a machine-readable report the CI job picks up and pastes into
+    # an auto-created GitHub Issue. Kept simple: one Markdown table.
+    $reportLines = @()
+    $reportLines += '| Status | URL | Referenced in |'
+    $reportLines += '|---|---|---|'
+    foreach ($r in $failed) {
+        $files = ($r.Files -join '<br>')
+        $urlEsc = '`' + $r.Url + '`'
+        $reportLines += "| $($r.Status) | $urlEsc | $files |"
+    }
+    if ($env:GITHUB_WORKSPACE) {
+        $reportPath = Join-Path $env:GITHUB_WORKSPACE 'url-check-report.md'
+    } else {
+        $reportPath = 'url-check-report.md'
+    }
+    ($reportLines -join "`n") | Set-Content -Path $reportPath -Encoding UTF8
+
     exit 1
 }
 
