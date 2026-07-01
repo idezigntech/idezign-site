@@ -4,6 +4,36 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.1 - 2026-06-30 - Server-safe cleanup + REPAIR account fallback + real time drift check
+  * Cleanup: on SERVERS the network-adapter DHCP conversion is now SKIPPED.
+    Static IP is preserved as-is; the config is still reported for the record.
+    Servers need static IPs for domain-controller / file-server / print-server
+    workloads - yanking them to DHCP was breaking those setups.
+  * Cleanup: computer-rename prompt now shows current computer name before
+    asking. User-rename prompt already showed current user; both are now
+    consistent. Less risk of accidentally renaming the wrong machine.
+  * Cleanup + Diagnostics: the LocalAccounts PowerShell cmdlets (Get-LocalUser,
+    New-LocalUser, Get-LocalGroupMember, Add-LocalGroupMember) sometimes fail
+    to auto-load on Windows 11 25H2 with a "not recognized as a cmdlet" error
+    even though the account subsystem is present. This produced two visible
+    bugs: (1) Cleanup could not create/manage the REPAIR account at all, and
+    (2) Diagnostics falsely reported "REPAIR MISSING" on machines that had a
+    REPAIR account. Fix: try to force-load Microsoft.PowerShell.LocalAccounts
+    at the top of the section, then fall back to `net user` / `net localgroup`
+    everywhere the cmdlets would otherwise be used. Both scripts now work
+    identically on 25H2 machines with or without the cmdlets available.
+  * iDezign_Common.psm1 (Sync-SystemTime): the old check only compared local
+    time before-vs-after the w32tm resync and said "clock is accurate" if the
+    delta was small - which is wrong. w32tm can silently fail (no NTP peer
+    reachable, service wedged, proxy stripping traffic) and leave the clock
+    drifted while reporting success. New check: after the resync, compare
+    local time to an authoritative HTTP Date header (Google, Microsoft, or
+    Cloudflare) and warn loudly if drift > 60s. Returns false in that case
+    so callers can abort. If HTTP probes all fail too, we say "unverified"
+    honestly instead of falsely claiming accuracy.
+  * All three scripts have their $ScriptVersion bumped to the new v3.1
+    strings so the version-consistency check in CI catches any drift.
+
 v3.0 - 2026-06-30 - Major: Remediation + Save PDF consolidated, Migration goose
   * MENU CONSOLIDATION (the "major" in this major bump): "Save PDF to
     Desktop" is no longer a standalone menu item. Its functionality is now
