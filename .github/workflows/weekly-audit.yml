@@ -1,0 +1,250 @@
+name: Weekly consistency audit
+
+# Scheduled repo-health check. Runs Monday 13:00 UTC (~6am Pacific in
+# summer, ~5am Pacific in winter) - one hour after the URL-rot check so
+# their auto-issue creations don't collide. Manual dispatch available.
+#
+# What it audits:
+#   1. Manifest-vs-script version verify (each script's embedded version
+#      matches the value in iDezign_Versions.json)
+#   2. PowerShell parse-check across every .ps1/.psm1 in scripts/
+#   3. External URL health (calls the same script the URL-rot workflow
+#      uses so both paths use the same logic)
+#   4. Presence of required top-level files (README/CHANGELOG etc.)
+#
+# On failure: opens (or updates) a dedup'ed GitHub Issue tagged
+# 'weekly-audit' with a summary of what failed. Same notification path
+# as the URL-rot workflow.
+
+permissions:
+  contents: read
+  issues: write
+
+on:
+  schedule:
+    # Monday 13:00 UTC. URL-rot runs at 12:00 UTC (one hour earlier).
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------------
+      # 1. Manifest-vs-script version verify
+      # ----------------------------------------------------------------
+      - name: Verify scripts match the manifest
+        id: manifest
+        run: |
+          set +e
+          python3 << 'PYEOF' > /tmp/manifest-audit.txt 2>&1
+          import json, os, re
+
+          mf = json.load(open('scripts/iDezign_Versions.json'))
+          expected = mf.get('scripts', {})
+          pat = re.compile(r"""(?:\$ScriptVersion|\$script:ModuleVersion)\s*=\s*['"]([^'"]+)['"]""")
+
+          ok, mismatches, missing = [], [], []
+          for fname, claimed in expected.items():
+              if fname.lower().endswith('.json'):
+                  ok.append((fname, '(manifest)'))
+                  continue
+              path = os.path.join('scripts', fname)
+              if not os.path.isfile(path):
+                  missing.append(fname)
+                  continue
+              text = open(path, encoding='utf-8').read()
+              m = pat.search(text)
+              if not m:
+                  mismatches.append((fname, claimed, '(no version line found)'))
+                  continue
+              actual = m.group(1)
+              if actual == claimed:
+                  ok.append((fname, actual))
+              else:
+                  mismatches.append((fname, claimed, actual))
+
+          print('=== Manifest vs script version consistency ===')
+          for f, v in ok:
+              print(f'  OK       {f}: {v}')
+          for f in missing:
+              print(f'  MISSING  {f} (listed in manifest but file not found)')
+          for f, claimed, actual in mismatches:
+              print(f'  FAIL     {f}: manifest="{claimed}" file="{actual}"')
+
+          if mismatches or missing:
+              import sys
+              sys.exit(1)
+          PYEOF
+          RC=$?
+          echo "manifest_rc=$RC" >> "$GITHUB_OUTPUT"
+          cat /tmp/manifest-audit.txt
+          exit 0
+
+      # ----------------------------------------------------------------
+      # 2. Parse check every PowerShell script
+      # ----------------------------------------------------------------
+      - name: Parse-check every PowerShell script
+        id: parse
+        shell: pwsh
+        run: |
+          $errors = 0
+          $lines = @()
+          Get-ChildItem -Path scripts -File | Where-Object { $_.Extension -in '.ps1','.psm1' } | ForEach-Object {
+              $parseErrors = $null; $tokens = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+              if ($parseErrors.Count -gt 0) {
+                  $errors++
+                  $lines += "FAIL: $($_.Name)"
+                  foreach ($e in $parseErrors) {
+                      $lines += "  line $($e.Extent.StartLineNumber): $($e.Message)"
+                  }
+              } else {
+                  $lines += "OK  : $($_.Name)"
+              }
+          }
+          $lines | Set-Content -Path /tmp/parse-audit.txt
+          Write-Host ($lines -join "`n")
+          "parse_rc=$errors" | Add-Content -Path $env:GITHUB_OUTPUT
+          # Note: don't fail the step - collect all audit results, decide at end.
+
+      # ----------------------------------------------------------------
+      # 3. External URL health (calls the same script as the URL-rot job)
+      # ----------------------------------------------------------------
+      - name: External URL check
+        id: urls
+        shell: pwsh
+        run: |
+          $rc = 0
+          try {
+              ./.github/scripts/check-external-urls.ps1 2>&1 | Tee-Object -FilePath /tmp/url-audit.txt
+              $rc = $LASTEXITCODE
+          } catch {
+              $rc = 1
+              $_.Exception.Message | Add-Content -Path /tmp/url-audit.txt
+          }
+          "url_rc=$rc" | Add-Content -Path $env:GITHUB_OUTPUT
+
+      # ----------------------------------------------------------------
+      # 4. Required top-level files present
+      # ----------------------------------------------------------------
+      - name: Verify required top-level files present
+        id: files
+        run: |
+          set +e
+          MISSING=""
+          for f in CHANGELOG.txt scripts/iDezign_Versions.json toolkit/index.html; do
+            if [ ! -f "$f" ]; then MISSING="$MISSING $f"; fi
+          done
+          echo "Required files check:" > /tmp/files-audit.txt
+          if [ -n "$MISSING" ]; then
+            echo "MISSING files:$MISSING" >> /tmp/files-audit.txt
+            echo "files_rc=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "All required files present." >> /tmp/files-audit.txt
+            echo "files_rc=0" >> "$GITHUB_OUTPUT"
+          fi
+          cat /tmp/files-audit.txt
+
+      # ----------------------------------------------------------------
+      # 5. Compile audit report + decide overall pass/fail
+      # ----------------------------------------------------------------
+      - name: Compile audit report
+        id: report
+        run: |
+          {
+            echo "# Weekly audit - $(date -u +%Y-%m-%d)"
+            echo ""
+            echo "## Manifest vs script versions"
+            echo '```'
+            cat /tmp/manifest-audit.txt || echo "(no output)"
+            echo '```'
+            echo ""
+            echo "## PowerShell parse check"
+            echo '```'
+            cat /tmp/parse-audit.txt || echo "(no output)"
+            echo '```'
+            echo ""
+            echo "## External URL check"
+            echo '```'
+            tail -n 60 /tmp/url-audit.txt 2>/dev/null || echo "(no output)"
+            echo '```'
+            echo ""
+            echo "## Required files"
+            echo '```'
+            cat /tmp/files-audit.txt
+            echo '```'
+          } > /tmp/audit-report.md
+
+          # Decide overall status
+          M=${{ steps.manifest.outputs.manifest_rc }}
+          P=${{ steps.parse.outputs.parse_rc }}
+          U=${{ steps.urls.outputs.url_rc }}
+          F=${{ steps.files.outputs.files_rc }}
+          echo "step results: manifest=$M parse=$P url=$U files=$F"
+
+          if [ "$M" != "0" ] || [ "$P" != "0" ] || [ "$U" != "0" ] || [ "$F" != "0" ]; then
+            echo "overall_status=fail" >> "$GITHUB_OUTPUT"
+          else
+            echo "overall_status=pass" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "=== Audit report (also saved to /tmp/audit-report.md) ==="
+          cat /tmp/audit-report.md
+
+      # ----------------------------------------------------------------
+      # 6. On failure: open (or update) a GitHub Issue
+      # ----------------------------------------------------------------
+      - name: Open issue on failure
+        if: steps.report.outputs.overall_status == 'fail'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const dateStr = new Date().toISOString().split('T')[0];
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            let body = `Weekly consistency audit failed on **${dateStr}**.\n\n`;
+            body += `[View the failed run](${runUrl})\n\n`;
+            try {
+              body += fs.readFileSync('/tmp/audit-report.md', 'utf8');
+            } catch (e) {
+              body += '_(audit report file not written - check the run log)_';
+            }
+            body += `\n\n---\nOnce all failing sections are green, close this issue.`;
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'weekly-audit',
+              per_page: 5
+            });
+
+            if (existing.length > 0) {
+              const num = existing[0].number;
+              console.log(`Existing weekly-audit issue #${num} open - appending comment.`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: num,
+                body: `Audit failed again on ${dateStr}. [Run](${runUrl})\n\n<details><summary>Report</summary>\n\n${body.substring(0, 40000)}\n\n</details>`
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Weekly audit failed (${dateStr})`,
+              body,
+              labels: ['weekly-audit', 'automated']
+            });
+
+      - name: Fail run if audit failed
+        if: steps.report.outputs.overall_status == 'fail'
+        run: exit 1

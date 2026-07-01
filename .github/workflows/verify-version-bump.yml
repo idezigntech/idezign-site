@@ -1,0 +1,132 @@
+name: Verify version bumped when scripts change
+
+# Push guard: if any scripts/*.ps1 or scripts/*.psm1 was edited but its
+# embedded $ScriptVersion (or $script:ModuleVersion) is IDENTICAL to the
+# version in the parent commit, fail the check.
+#
+# This catches "silent edits" that skip the version bump - a scenario the
+# existing manifest-vs-script check misses (both match "the old version",
+# so the manifest check is happy). Together they cover:
+#
+#   * silent edit           -> caught here (script changed, version didn't)
+#   * manifest not bumped   -> caught by build workflow's manifest verify
+#   * script file not shipped -> caught by build workflow's manifest verify
+#                                 (embedded version won't match manifest)
+#
+# On failure: exits non-zero. Since Eric commits direct-to-main, the
+# on: push trigger is what fires; on: pull_request is future-proofing.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/**.ps1'
+      - 'scripts/**.psm1'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**.ps1'
+      - 'scripts/**.psm1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with history
+        uses: actions/checkout@v4
+        with:
+          # Need parent commit to diff against.
+          fetch-depth: 2
+
+      - name: Compare $ScriptVersion between parent and current commit
+        run: |
+          set -euo pipefail
+          python3 << 'PYEOF'
+          import os, re, subprocess, sys
+
+          event = os.environ.get('GITHUB_EVENT_NAME', 'push')
+          if event == 'pull_request':
+              # GitHub sets these envs on PR events
+              base = os.environ.get('GITHUB_BASE_REF', 'main')
+              base_ref = f'origin/{base}'
+              # Ensure we have the base branch
+              subprocess.run(['git', 'fetch', '--depth=1', 'origin', base], check=False)
+              base_commit = base_ref
+          else:
+              base_commit = 'HEAD~1'
+
+          # Which .ps1 / .psm1 changed?
+          diff = subprocess.run(
+              ['git', 'diff', '--name-only', base_commit, 'HEAD', '--',
+               'scripts/*.ps1', 'scripts/*.psm1'],
+              capture_output=True, text=True, check=True
+          )
+          changed = [f.strip() for f in diff.stdout.splitlines() if f.strip()]
+
+          if not changed:
+              print('No PowerShell scripts changed. Nothing to verify.')
+              sys.exit(0)
+
+          print(f'Changed scripts ({len(changed)}):')
+          for f in changed:
+              print(f'  - {f}')
+          print()
+
+          version_pat = re.compile(
+              r"""(?:\$ScriptVersion|\$script:ModuleVersion)\s*=\s*['"]([^'"]+)['"]"""
+          )
+
+          def extract_version(text):
+              m = version_pat.search(text)
+              return m.group(1) if m else None
+
+          failures = []
+          for f in changed:
+              # Old file content from parent commit
+              old_res = subprocess.run(
+                  ['git', 'show', f'{base_commit}:{f}'],
+                  capture_output=True, text=True
+              )
+              old_text = old_res.stdout if old_res.returncode == 0 else ''
+              old_ver = extract_version(old_text)
+
+              # New file content (working tree)
+              if not os.path.isfile(f):
+                  print(f'  {f}: file deleted - skipping version check')
+                  continue
+              with open(f, encoding='utf-8') as fh:
+                  new_text = fh.read()
+              new_ver = extract_version(new_text)
+
+              if new_ver is None:
+                  print(f'  {f}: no version line found in current version - skipping')
+                  continue
+
+              if old_ver is None:
+                  print(f'  OK  : {f} is NEW (version = "{new_ver}")')
+                  continue
+
+              if old_ver == new_ver:
+                  print(f'  FAIL: {f} was edited but version is still "{new_ver}" (unchanged from parent)')
+                  failures.append((f, new_ver))
+              else:
+                  print(f'  OK  : {f} bumped "{old_ver}" -> "{new_ver}"')
+
+          if failures:
+              print()
+              print('FAIL: one or more scripts were modified without a $ScriptVersion bump:')
+              for f, ver in failures:
+                  print(f'  - {f} (still at "{ver}")')
+              print()
+              print('For each file above, do BOTH:')
+              print("  (1) bump the $ScriptVersion line at the top of the .ps1/.psm1 file")
+              print('  (2) update the matching entry in scripts/iDezign_Versions.json')
+              sys.exit(1)
+
+          print()
+          print('All modified scripts have a bumped $ScriptVersion.')
+          PYEOF

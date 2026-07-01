@@ -7,6 +7,13 @@ name: Build toolkit zip
 #
 # No infinite loop: the bot's commit only touches dist/, and dist/ is
 # NOT in the trigger paths below.
+#
+# v3.2 addition: after building, if a GitHub Release matching the
+# current toolkitVersion exists (tag v{ver}), upload the freshly-built
+# .zip and .exe as release assets (with --clobber so re-runs replace
+# stale copies). This keeps the "Download from GitHub Releases" fallback
+# link on idezign.ai/toolkit alive - previously the SmartScreen-bypass
+# fallback URL 404'd because no assets were ever attached to releases.
 
 on:
   push:
@@ -18,6 +25,8 @@ on:
       - 'logos/iDezign-logo-trim.png'
       - '.github/workflows/build-toolkit-zip.yml'
   workflow_dispatch:
+  release:
+    types: [published, released]
 
 permissions:
   contents: write
@@ -56,7 +65,6 @@ jobs:
 
           ok, mismatches, missing = [], [], []
           for fname, claimed in expected.items():
-              # The manifest itself has no $ScriptVersion line - skip.
               if fname.lower().endswith('.json'):
                   ok.append((fname, '(manifest)'))
                   continue
@@ -100,14 +108,6 @@ jobs:
           print('All scripts match their manifest entries.')
           PYEOF
 
-      # ----------------------------------------------------------------
-      # v2.9.1 follow-up: the parse error that escaped to v2.9 (Sync
-      # Drives' $ScriptVersion was placed BEFORE param(), which makes
-      # PowerShell reject [CmdletBinding()] and refuse to load the
-      # script) would have been caught here. Parse every .ps1/.psm1 in
-      # scripts/ with the PowerShell language parser. Any syntax error
-      # fails the build BEFORE the zip is rebuilt.
-      # ----------------------------------------------------------------
       - name: Parse-check every PowerShell script
         shell: pwsh
         run: |
@@ -141,16 +141,12 @@ jobs:
           STAGE="$(mktemp -d)"
           echo "$STAGE" > /tmp/stage_path
 
-          # PowerShell, manifest, batch launcher (flat in zip, no subdirs)
           for f in scripts/*.ps1 scripts/*.psm1 scripts/*.json scripts/*.bat; do
             cp "$f" "$STAGE/"
           done
 
-          # Brand assets the launcher displays
           cp logos/iDezign-ai-logo-v2-transparent.png "$STAGE/"
           cp logos/iDezign-logo-trim.png "$STAGE/"
-
-          # Changelog (so end users see what changed)
           cp CHANGELOG.txt "$STAGE/"
 
           echo "--- staged ---"
@@ -162,27 +158,13 @@ jobs:
           STAGE=$(cat /tmp/stage_path)
           mkdir -p dist
           rm -f dist/iDezign-Toolkit.zip
-          # -X strips extra file attributes for cleaner archives
           (cd "$STAGE" && zip -X -r "$GITHUB_WORKSPACE/dist/iDezign-Toolkit.zip" .)
           echo "--- zip contents ---"
           unzip -l dist/iDezign-Toolkit.zip
 
-      # ----------------------------------------------------------------
-      # v2.9.2 add-on: also build dist/iDezign-Toolkit.exe (a self-
-      # extracting EXE) alongside the zip. Double-click extracts the
-      # toolkit silently to %LOCALAPPDATA%\iDezign-Toolkit and runs
-      # the GUI. Both files ship with every release; users pick
-      # whichever suits their environment (.zip avoids SmartScreen
-      # warnings on first download but needs unzip-then-run; .exe is
-      # one-click but may trigger SmartScreen until reputation builds).
-      # ----------------------------------------------------------------
       - name: Install NSIS (modern Windows installer maker)
         run: |
           set -euo pipefail
-          # NSIS replaces chrislake/7zsfxmm: chrislake last released in 2017
-          # and silently fails to extract on Windows 11 25H2 (Smart App Control
-          # + tighter unsigned-EXE rules). NSIS is actively maintained since
-          # 1995, used by Steam/OBS/Filezilla, works on every Windows since XP.
           sudo apt-get update -qq
           sudo apt-get install -y nsis
           makensis -VERSION
@@ -192,9 +174,6 @@ jobs:
           set -euo pipefail
           STAGE=$(cat /tmp/stage_path)
 
-          # NSIS script: silent install to %LOCALAPPDATA%, auto-run the launcher.
-          # Equivalent to the chrislake SFX config we had before, but works on
-          # modern Windows because NSIS is actively maintained.
           cat > /tmp/toolkit.nsi << 'NSIEOF'
           Unicode true
           Name "iDezign Toolkit"
@@ -226,10 +205,52 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if git diff --quiet -- dist/iDezign-Toolkit.zip dist/iDezign-Toolkit.exe; then
-            echo "dist/ assets unchanged \u2014 nothing to commit."
+            echo "dist/ assets unchanged - nothing to commit."
             exit 0
           fi
 
           git add dist/iDezign-Toolkit.zip dist/iDezign-Toolkit.exe
           git commit -m "chore(toolkit): rebuild zip + exe (v${{ steps.ver.outputs.version }})"
           git push
+
+      # ----------------------------------------------------------------
+      # v3.2 addition: attach dist/ assets to the matching GitHub Release
+      # (if one exists for the current toolkitVersion). This fills the
+      # gap that made /releases/latest/download/iDezign-Toolkit.exe 404 -
+      # previously, releases were cut but assets were never uploaded.
+      #
+      # Behavior:
+      #   - Trigger 'release: published' -> assets ready + we know the
+      #     matching tag, so upload immediately.
+      #   - Trigger 'push to main' or 'workflow_dispatch' -> check if a
+      #     release with tag v{ver} exists; if yes, upload with --clobber;
+      #     if no, no-op (assets stay in dist/ waiting for the release).
+      # ----------------------------------------------------------------
+      - name: Attach dist/ assets to matching release (if it exists)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="v$VERSION"
+
+          # Determine which tag to attach to. On 'release' event use the
+          # tag that fired it (in case of hotfix numbering differences);
+          # otherwise use the manifest version.
+          if [ -n "${GITHUB_REF_NAME:-}" ] && [ "${GITHUB_EVENT_NAME:-}" = "release" ]; then
+            TAG="$GITHUB_REF_NAME"
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG exists - uploading assets..."
+            gh release upload "$TAG" \
+              dist/iDezign-Toolkit.zip \
+              dist/iDezign-Toolkit.exe \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            echo "Assets uploaded to release $TAG:"
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          else
+            echo "No release with tag $TAG yet - skipping asset upload."
+            echo "  (Assets will be attached when release is cut, or when this workflow re-runs after the release exists.)"
+          fi
