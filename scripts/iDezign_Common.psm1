@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.06.01-v2.5-stage-manifest'
+$script:ModuleVersion = '2026.06.30-v3.1-time-drift'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -1309,9 +1309,48 @@ function Sync-SystemTime {
     if ($realDrift -gt 60) {
         Write-Host "    Clock corrected by ~$([math]::Round($realDrift,0)) seconds." -ForegroundColor Yellow
         Write-Host "    Updated local time : $($afterDate.ToString('yyyy-MM-dd HH:mm:ss'))" -ForegroundColor Yellow
+    }
+
+    # 4b. INDEPENDENT drift check against an authoritative HTTP time source.
+    # The delta-before-vs-after check above only detects that w32tm CHANGED
+    # the clock - not whether the resulting clock is ACCURATE. w32tm can
+    # silently fail (no NTP reachable, service wedged, etc.) and leave the
+    # clock still drifted. This check compares to an HTTP Date header from
+    # a well-known site and warns loudly if we're still off.
+    $httpDrift = $null
+    foreach ($probe in @('http://www.google.com','http://www.microsoft.com','http://www.cloudflare.com')) {
+        try {
+            $r = Invoke-WebRequest -Uri $probe -UseBasicParsing -Method Head -TimeoutSec 5 -ErrorAction Stop
+            $dateHdr = $r.Headers['Date']
+            if (-not $dateHdr -and $r.Headers.Date) { $dateHdr = $r.Headers.Date }
+            if ($dateHdr) {
+                $serverUtc = ([DateTime]::Parse($dateHdr)).ToUniversalTime()
+                $localUtc  = [DateTime]::UtcNow
+                $httpDrift = [math]::Round([math]::Abs(($serverUtc - $localUtc).TotalSeconds))
+                break
+            }
+        } catch { }
+    }
+    if ($null -ne $httpDrift) {
+        if ($httpDrift -gt 60) {
+            Write-Host "    WARNING: Clock is STILL OFF by ~$httpDrift seconds after sync!" -ForegroundColor Red
+            Write-Host "    (w32tm reported success but drift check vs HTTP Date says otherwise.)" -ForegroundColor Red
+            Write-Host "    Common causes: firewall blocking UDP 123, no reachable NTP peer," -ForegroundColor Yellow
+            Write-Host "    W32Time service wedged, or a proxy stripping Date headers." -ForegroundColor Yellow
+            Write-Host "    Fix: Settings > Time & language > Date & time > Sync now (or set" -ForegroundColor Yellow
+            Write-Host "    time zone manually if the tz is wrong)." -ForegroundColor Yellow
+            return $false
+        } else {
+            if (-not $QuietIfAccurate) {
+                Write-Host "    Clock verified accurate (drift vs internet time: ~${httpDrift}s)." -ForegroundColor DarkGray
+            }
+        }
     } else {
+        # HTTP probe failed entirely - fall back to the year check only, and
+        # be honest that we couldn't independently verify.
         if (-not $QuietIfAccurate) {
-            Write-Host "    Clock was already accurate." -ForegroundColor DarkGray
+            Write-Host "    (Could not verify clock via HTTP time - no probe reachable.)" -ForegroundColor DarkYellow
+            Write-Host "    Clock accuracy is UNVERIFIED. Check manually if in doubt." -ForegroundColor DarkYellow
         }
     }
 

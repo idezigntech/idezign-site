@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped whenever the HTML report format changes.
 # Visible in the HTML report header so we can verify deployed version at a glance.
-$ScriptVersion = '2026.06.01-v2.5-driver-updates'
+$ScriptVersion = '2026.06.30-v3.1-repair-fallback'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -1740,14 +1740,33 @@ try {
 
     # ===== Security configuration =====
     # REPAIR account exists and is in Administrators
-    try {
-        $repair = Get-LocalUser -Name 'REPAIR' -ErrorAction Stop
-        $adminGroupName = if (Get-Command Get-AdminGroupName -EA SilentlyContinue) { Get-AdminGroupName } else { 'Administrators' }
+    # v3.1: LocalAccounts cmdlets sometimes don't auto-load on Win 11 25H2. Force
+    # the module + use `net user` / `net localgroup` as a fallback so this check
+    # doesn't falsely report "REPAIR MISSING" when the account is actually there.
+    try { Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction SilentlyContinue } catch { }
+    $adminGroupName = if (Get-Command Get-AdminGroupName -EA SilentlyContinue) { Get-AdminGroupName } else { 'Administrators' }
+    $repairExists = $false
+    if (Get-Command Get-LocalUser -ErrorAction SilentlyContinue) {
+        try { $repairExists = [bool](Get-LocalUser -Name 'REPAIR' -ErrorAction Stop) } catch { }
+    }
+    if (-not $repairExists) {
+        # Fallback: `net user REPAIR` returns 0 if the account exists.
+        $null = & net user REPAIR 2>&1
+        $repairExists = ($LASTEXITCODE -eq 0)
+    }
+    if ($repairExists) {
         $isInAdmins = $false
-        try {
-            $isInAdmins = (Get-LocalGroupMember -Group $adminGroupName -ErrorAction Stop |
-                           Where-Object { $_.Name -like "*\REPAIR" -or $_.Name -eq 'REPAIR' }) -ne $null
-        } catch { }
+        if (Get-Command Get-LocalGroupMember -ErrorAction SilentlyContinue) {
+            try {
+                $isInAdmins = [bool]((Get-LocalGroupMember -Group $adminGroupName -ErrorAction Stop) |
+                                     Where-Object { $_.Name -like "*\REPAIR" -or $_.Name -eq 'REPAIR' })
+            } catch { }
+        }
+        if (-not $isInAdmins) {
+            # Fallback via `net localgroup`
+            $out = & net localgroup $adminGroupName 2>&1
+            $isInAdmins = [bool]($out | Select-String -Pattern '^\s*REPAIR\s*$' -Quiet)
+        }
         if ($isInAdmins) {
             $vDetails += Add-VerifyLine 'PASS' '[REQ]' 'Security: REPAIR account' "EXISTS + in $adminGroupName"
         } else {
@@ -1755,7 +1774,7 @@ try {
             if ($vVerdict -eq 'OK') { $vVerdict = 'ATTENTION' }
             $vIssues += "REPAIR account exists but is not an administrator"
         }
-    } catch {
+    } else {
         $vDetails += Add-VerifyLine 'FAIL' '[REQ]' 'Security: REPAIR account' 'MISSING'
         if ($vVerdict -eq 'OK') { $vVerdict = 'ATTENTION' }
         $vIssues += "REPAIR admin account is missing - tech can't recover this machine"

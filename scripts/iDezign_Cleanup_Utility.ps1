@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.06.02-allprofiles'
+$ScriptVersion = '2026.06.30-v3.1-server-repair-fixes'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -276,6 +276,19 @@ if (-not $ResumeAfterUpdate) {
         Write-Host "  (Get-iDezignActivationStatus not available - skipping.)" -ForegroundColor DarkYellow
     }
 
+    # 4b. Windows version (informational) - shown right after activation -------
+    Write-Host ""
+    Write-Host "[Pre-flight] Windows version..." -ForegroundColor Green
+    try {
+        $osv = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $disp = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue).DisplayVersion
+        $verLabel = if ($disp) { "$($osv.Caption) $disp (build $($osv.BuildNumber))" }
+                    else        { "$($osv.Caption) (build $($osv.BuildNumber))" }
+        Write-Host "  $verLabel" -ForegroundColor Gray
+    } catch {
+        Write-Host "  (could not read Windows version: $($_.Exception.Message))" -ForegroundColor DarkYellow
+    }
+
     # 5. BitLocker status (DECISION POINT for image capture) -----------------
     Write-Host ""
     Write-Host "[Pre-flight 5/5] BitLocker status..." -ForegroundColor Green
@@ -474,6 +487,7 @@ if (-not $ResumeAfterUpdate) {
 
     # --- Computer rename ---
     Write-Host ""
+    Write-Host "Current computer name: $env:COMPUTERNAME" -ForegroundColor Cyan
     $answer = Read-Host "Rename this COMPUTER? (Y/N)"
     $doRenameComputer = $answer -match '^(y|yes)$'
     $newComputerName  = ''
@@ -485,6 +499,7 @@ if (-not $ResumeAfterUpdate) {
 
     # --- User rename ---
     Write-Host ""
+    Write-Host "Current user account: $CurrentUser" -ForegroundColor Cyan
     $answer = Read-Host "Rename current USER ACCOUNT '$CurrentUser'? (Y/N)"
     $doRenameUser = $answer -match '^(y|yes)$'
     $newUserName  = ''
@@ -2461,6 +2476,166 @@ Write-Host "  (cleanmgr.exe intentionally not run - PowerShell-native cleanup is
 
 #endregion
 
+#region --- 2c. Imaging-prep tweaks (always-run, added v2.5) ------------------
+# Self-contained, failure-tolerant prep applied on every cleanup run. No prompts,
+# no persisted state - standard prep for a machine being handed to an end user.
+# Each step is wrapped so one failure never blocks the rest.
+
+Write-Host "`n[Phase 2c] Imaging-prep tweaks..." -ForegroundColor Green
+
+# --- 2c-1: Turn off Windows notifications (current user) ----------------------
+Write-Host "  [2c-1] Disabling Windows notifications + suggestion nags..." -ForegroundColor DarkGray
+try {
+    $pnRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\PushNotifications'
+    New-Item -Path $pnRoot -Force -ErrorAction SilentlyContinue | Out-Null
+    Set-ItemProperty -Path $pnRoot -Name 'ToastEnabled' -Type DWord -Value 0 -Force -ErrorAction SilentlyContinue
+
+    $explPol = 'HKCU:\Software\Policies\Microsoft\Windows\Explorer'
+    New-Item -Path $explPol -Force -ErrorAction SilentlyContinue | Out-Null
+    Set-ItemProperty -Path $explPol -Name 'DisableNotificationCenter' -Type DWord -Value 1 -Force -ErrorAction SilentlyContinue
+
+    $cdm = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager'
+    New-Item -Path $cdm -Force -ErrorAction SilentlyContinue | Out-Null
+    foreach ($v in 'SubscribedContent-310093Enabled','SubscribedContent-338389Enabled','SystemPaneSuggestionsEnabled','ScoobeSystemSettingEnabled') {
+        Set-ItemProperty -Path $cdm -Name $v -Type DWord -Value 0 -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host "    Notifications + suggestion nags disabled (current user)." -ForegroundColor DarkGray
+} catch {
+    Write-Host "    (notifications step issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+
+# --- 2c-2: Network adapters -> DHCP (report any static config FIRST) ----------
+# SKIP on Servers: they need static IPs for domain-controller, file-server,
+# print-server, application-server workloads. Yanking a server to DHCP could
+# take down services or make the box unfindable. The static config still gets
+# RECORDED (below) for the tech's records.
+Write-Host "  [2c-2] Network adapter configuration..." -ForegroundColor DarkGray
+try {
+    $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }
+    if (-not $adapters) { Write-Host "    (no active physical adapters found.)" -ForegroundColor DarkGray }
+    foreach ($ad in $adapters) {
+        $ipif = Get-NetIPInterface -InterfaceIndex $ad.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        if (-not $ipif) { continue }
+        if ($ipif.Dhcp -eq 'Disabled') {
+            # STATIC - record the existing config loudly before changing anything
+            $ips = Get-NetIPAddress  -InterfaceIndex $ad.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+            $gw  = (Get-NetRoute -InterfaceIndex $ad.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1).NextHop
+            $dns = (Get-DnsClientServerAddress -InterfaceIndex $ad.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ', '
+            if ($IsServer) {
+                Write-Host "    STATIC IP on '$($ad.Name)' (Server - KEEPING static, not switching to DHCP):" -ForegroundColor Cyan
+            } else {
+                Write-Host "    *** STATIC IP on '$($ad.Name)' - RECORDING before switch to DHCP ***" -ForegroundColor Yellow
+            }
+            foreach ($ip in $ips) { Write-Host ("      IP/Mask : {0}/{1}" -f $ip.IPAddress, $ip.PrefixLength) -ForegroundColor Yellow }
+            Write-Host ("      Gateway : {0}" -f $gw)  -ForegroundColor Yellow
+            Write-Host ("      DNS     : {0}" -f $dns) -ForegroundColor Yellow
+
+            if ($IsServer) {
+                Write-Host "      -> '$($ad.Name)' left as-is (Server keeps static IP)." -ForegroundColor DarkGray
+            } else {
+                Set-NetIPInterface       -InterfaceIndex $ad.ifIndex -Dhcp Enabled -ErrorAction SilentlyContinue
+                Set-DnsClientServerAddress -InterfaceIndex $ad.ifIndex -ResetServerAddresses -ErrorAction SilentlyContinue
+                Write-Host "      -> '$($ad.Name)' switched to DHCP." -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host "    '$($ad.Name)' already on DHCP - no change." -ForegroundColor DarkGray
+        }
+    }
+} catch {
+    Write-Host "    (network step issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+
+# --- 2c-3: Remove Microsoft Teams (consumer + new work/school + machine-wide) -
+Write-Host "  [2c-3] Removing Microsoft Teams app(s)..." -ForegroundColor DarkGray
+try {
+    # Hide the Win11 chat icon (per-machine policy)
+    $chatPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Chat'
+    New-Item -Path $chatPol -Force -ErrorAction SilentlyContinue | Out-Null
+    Set-ItemProperty -Path $chatPol -Name 'ChatIcon' -Type DWord -Value 3 -Force -ErrorAction SilentlyContinue
+
+    foreach ($pkg in 'MicrosoftTeams','MSTeams') {
+        Get-AppxPackage -AllUsers -Name $pkg -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue }
+        Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq $pkg } |
+            ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue } | Out-Null
+    }
+
+    # Classic "Teams Machine-Wide Installer" (MSI)
+    $twKeys = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                               'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+              Where-Object { $_.DisplayName -like 'Teams Machine-Wide Installer*' }
+    foreach ($t in $twKeys) {
+        if ($t.UninstallString -match '\{[0-9A-Fa-f\-]+\}') {
+            $guid = $Matches[0]
+            Start-Process msiexec.exe -ArgumentList "/x $guid /qn /norestart" -Wait -ErrorAction SilentlyContinue
+        }
+    }
+    Write-Host "    Teams (consumer + work/school + machine-wide) removal attempted." -ForegroundColor DarkGray
+} catch {
+    Write-Host "    (Teams removal issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+
+# --- 2c-4: Chrome bookmark bar ON + iDezign.ai bookmark (current user) --------
+# Edits the current user's Default Chrome profile so the bookmark bar shows and
+# carries an iDezign.ai shortcut. Non-fatal if Chrome isn't installed / no profile.
+# Chrome recomputes the Bookmarks checksum on next launch, so we drop the stale
+# checksum after editing rather than trying to recompute the MD5 ourselves.
+Write-Host "  [2c-4] Chrome bookmark bar + iDezign.ai bookmark..." -ForegroundColor DarkGray
+try {
+    $chromeUserData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+    $profileDir     = Join-Path $chromeUserData 'Default'
+    if (Test-Path $chromeUserData) {
+        if (-not (Test-Path $profileDir)) { New-Item -Path $profileDir -ItemType Directory -Force | Out-Null }
+
+        # (a) Show the bookmark bar on all tabs (Preferences)
+        $prefPath = Join-Path $profileDir 'Preferences'
+        if (Test-Path $prefPath) {
+            $pref = Get-Content -Raw -LiteralPath $prefPath | ConvertFrom-Json
+        } else {
+            $pref = [PSCustomObject]@{}
+        }
+        if (-not $pref.bookmark_bar) { $pref | Add-Member -NotePropertyName 'bookmark_bar' -NotePropertyValue ([PSCustomObject]@{}) -Force }
+        $pref.bookmark_bar | Add-Member -NotePropertyName 'show_on_all_tabs' -NotePropertyValue $true -Force
+        ($pref | ConvertTo-Json -Depth 100 -Compress) | Set-Content -LiteralPath $prefPath -Encoding UTF8
+
+        # (b) Add an iDezign.ai bookmark to the bookmark bar (Bookmarks file)
+        $bmPath = Join-Path $profileDir 'Bookmarks'
+        if (Test-Path $bmPath) {
+            $bm = Get-Content -Raw -LiteralPath $bmPath | ConvertFrom-Json
+        } else {
+            $bm = [PSCustomObject]@{
+                roots = [PSCustomObject]@{
+                    bookmark_bar = [PSCustomObject]@{ children = @(); name = 'Bookmarks bar'; type = 'folder' }
+                    other        = [PSCustomObject]@{ children = @(); name = 'Other bookmarks'; type = 'folder' }
+                    synced       = [PSCustomObject]@{ children = @(); name = 'Mobile bookmarks'; type = 'folder' }
+                }
+                version = 1
+            }
+        }
+        $bar = $bm.roots.bookmark_bar
+        if (-not $bar.children) { $bar | Add-Member -NotePropertyName 'children' -NotePropertyValue @() -Force }
+        $already = @($bar.children | Where-Object { $_.url -like '*idezign.ai*' }).Count -gt 0
+        if (-not $already) {
+            $node = [PSCustomObject]@{ name = 'iDezign.ai'; type = 'url'; url = 'https://idezign.ai/' }
+            $bar.children = @($bar.children) + $node
+        }
+        ($bm | ConvertTo-Json -Depth 100) | Set-Content -LiteralPath $bmPath -Encoding UTF8
+        # Drop the stale top-level checksum so Chrome accepts the edited file
+        $raw = Get-Content -Raw -LiteralPath $bmPath
+        $raw = $raw -replace '("checksum"\s*:\s*")[0-9a-fA-F]*(")', '${1}${2}'
+        Set-Content -LiteralPath $bmPath -Value $raw -Encoding UTF8
+
+        Write-Host "    Bookmark bar enabled + iDezign.ai bookmark ensured (current user)." -ForegroundColor DarkGray
+    } else {
+        Write-Host "    (Chrome user-data folder not found - skipping.)" -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host "    (Chrome bookmark step issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+
+#endregion
+
 #region --- 3. Ensure REPAIR admin account exists (always runs) --------------
 # Standard service/repair account for technician access on imaged machines.
 # Password is hardcoded - treat this script as a secret accordingly.
@@ -2496,12 +2671,96 @@ if ($doRepair) {
 $repairName = 'REPAIR'
 $repairPwd  = 'achtung'
 
+# ---------------------------------------------------------------------------
+# LocalAccounts cmdlets (Get-LocalUser, New-LocalUser, etc.) sometimes fail to
+# auto-load on Win 11 25H2 (module discovery quirk). Try to force-load; if
+# even that fails, use `net user` / `net localgroup` as a fallback throughout.
+# This helper block wraps every operation so the rest of the code stays clean.
+# ---------------------------------------------------------------------------
+try { Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction SilentlyContinue } catch { }
+$script:HasLocalUserCmd = [bool](Get-Command Get-LocalUser -ErrorAction SilentlyContinue)
+if (-not $script:HasLocalUserCmd) {
+    Write-Host "  (Note: LocalAccounts cmdlets unavailable - using 'net user' fallback.)" -ForegroundColor DarkYellow
+}
+
+function Test-RepairUserExists {
+    param([string]$Name)
+    if ($script:HasLocalUserCmd) {
+        return $null -ne (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue)
+    }
+    $null = & net user $Name 2>&1
+    return $LASTEXITCODE -eq 0
+}
+function New-RepairUser {
+    param([string]$Name, [string]$Password, [string]$FullName, [string]$Description)
+    if ($script:HasLocalUserCmd) {
+        $sec = ConvertTo-SecureString $Password -AsPlainText -Force
+        New-LocalUser -Name $Name -Password $sec -FullName $FullName -Description $Description `
+                      -PasswordNeverExpires -AccountNeverExpires -ErrorAction Stop | Out-Null
+        return $true
+    }
+    $null = & net user $Name $Password /add /fullname:"$FullName" /comment:"$Description" 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $null = & net user $Name /expires:never 2>&1
+    try {
+        $u = Get-CimInstance Win32_UserAccount -Filter "Name='$Name' AND LocalAccount=TRUE" -ErrorAction SilentlyContinue
+        if ($u) { Set-CimInstance -InputObject $u -Property @{PasswordExpires = $false} -ErrorAction SilentlyContinue }
+    } catch { }
+    return $true
+}
+function Reset-RepairUserPassword {
+    param([string]$Name, [string]$Password)
+    if ($script:HasLocalUserCmd) {
+        $sec = ConvertTo-SecureString $Password -AsPlainText -Force
+        try {
+            Set-LocalUser -Name $Name -Password $sec -ErrorAction Stop
+            Set-LocalUser -Name $Name -PasswordNeverExpires $true -ErrorAction SilentlyContinue
+            Set-LocalUser -Name $Name -AccountNeverExpires       -ErrorAction SilentlyContinue
+            return $true
+        } catch { return $false }
+    }
+    $null = & net user $Name $Password 2>&1
+    return $LASTEXITCODE -eq 0
+}
+function Test-RepairInAdminGroup {
+    param([string]$Name, [string]$GroupName)
+    if ($script:HasLocalUserCmd -and (Get-Command Get-LocalGroupMember -ErrorAction SilentlyContinue)) {
+        try {
+            $members = Get-LocalGroupMember -Group $GroupName -ErrorAction Stop
+            return $null -ne ($members | Where-Object { $_.Name -like "*\$Name" -or $_.Name -eq $Name })
+        } catch { }
+    }
+    $out = & net localgroup $GroupName 2>&1
+    return [bool]($out | Select-String -Pattern ("^\s*" + [regex]::Escape($Name) + "\s*$") -Quiet)
+}
+function Add-RepairToAdminGroup {
+    param([string]$Name, [string]$GroupName)
+    if ($script:HasLocalUserCmd -and (Get-Command Add-LocalGroupMember -ErrorAction SilentlyContinue)) {
+        try {
+            Add-LocalGroupMember -Group $GroupName -Member $Name -ErrorAction Stop
+            return $true
+        } catch { }
+    }
+    $null = & net localgroup $GroupName $Name /add 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
 # Look up the local Administrators group by well-known SID so this works
 # regardless of system language (e.g. "Administradores" on Spanish Windows).
 $adminGroupName = $null
 try {
-    $adminGroupName = (Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction Stop).Name
-} catch {
+    if (Get-Command Get-LocalGroup -ErrorAction SilentlyContinue) {
+        $adminGroupName = (Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction Stop).Name
+    }
+} catch { }
+if (-not $adminGroupName) {
+    # Fallback: query WMI by well-known SID
+    try {
+        $g = Get-CimInstance Win32_Group -Filter "SID='S-1-5-32-544' AND LocalAccount=TRUE" -ErrorAction SilentlyContinue
+        if ($g) { $adminGroupName = $g.Name }
+    } catch { }
+}
+if (-not $adminGroupName) {
     Write-Host "  Could not resolve Administrators group by SID, falling back to 'Administrators'." -ForegroundColor DarkYellow
     $adminGroupName = 'Administrators'
 }
@@ -2510,45 +2769,34 @@ try {
 # Per policy: the password is reset on EVERY run so a known-good credential is
 # guaranteed on every imaged/serviced machine - even if the account already
 # existed with a forgotten or drifted password.
-$securePwd  = ConvertTo-SecureString $repairPwd -AsPlainText -Force
-$repairUser = Get-LocalUser -Name $repairName -ErrorAction SilentlyContinue
-if ($repairUser) {
+if (Test-RepairUserExists -Name $repairName) {
     Write-Host "  REPAIR account exists - resetting password to standard value." -ForegroundColor DarkGray
-    try {
-        Set-LocalUser -Name $repairName -Password $securePwd -ErrorAction Stop
-        # Re-assert the never-expire flags too, in case they drifted.
-        Set-LocalUser -Name $repairName -PasswordNeverExpires $true -ErrorAction SilentlyContinue
-        Set-LocalUser -Name $repairName -AccountNeverExpires       -ErrorAction SilentlyContinue
+    if (Reset-RepairUserPassword -Name $repairName -Password $repairPwd) {
         Write-Host "  REPAIR password reset (never expires re-asserted)." -ForegroundColor DarkGray
-    } catch {
-        Write-Host "  ERROR resetting REPAIR password: $($_.Exception.Message)" -ForegroundColor Red
+    } else {
+        Write-Host "  ERROR resetting REPAIR password (see above)." -ForegroundColor Red
     }
 } else {
     Write-Host "  REPAIR account not found - creating..." -ForegroundColor DarkGray
-    try {
-        New-LocalUser -Name $repairName `
-                      -Password $securePwd `
-                      -FullName $repairName `
-                      -Description 'Service/repair admin account' `
-                      -PasswordNeverExpires `
-                      -AccountNeverExpires `
-                      -ErrorAction Stop | Out-Null
+    if (New-RepairUser -Name $repairName -Password $repairPwd -FullName $repairName -Description 'Service/repair admin account') {
         Write-Host "  REPAIR account created (password set, never expires)." -ForegroundColor DarkGray
-    } catch {
-        Write-Host "  ERROR creating REPAIR account: $($_.Exception.Message)" -ForegroundColor Red
+    } else {
+        Write-Host "  ERROR creating REPAIR account (see above)." -ForegroundColor Red
     }
 }
 
 # 3b. Make sure REPAIR is in Administrators
 try {
-    $isAdmin = Get-LocalGroupMember -Group $adminGroupName -ErrorAction Stop |
-               Where-Object { $_.Name -like "*\$repairName" -or $_.Name -eq $repairName }
+    $isAdmin = Test-RepairInAdminGroup -Name $repairName -GroupName $adminGroupName
 
     if ($isAdmin) {
         Write-Host "  REPAIR already in $adminGroupName group." -ForegroundColor DarkGray
     } else {
-        Add-LocalGroupMember -Group $adminGroupName -Member $repairName -ErrorAction Stop
-        Write-Host "  REPAIR added to $adminGroupName group." -ForegroundColor DarkGray
+        if (Add-RepairToAdminGroup -Name $repairName -GroupName $adminGroupName) {
+            Write-Host "  REPAIR added to $adminGroupName group." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  ERROR adding REPAIR to $adminGroupName group (net localgroup returned non-zero)." -ForegroundColor Red
+        }
     }
 } catch {
     Write-Host "  ERROR managing $adminGroupName group: $($_.Exception.Message)" -ForegroundColor Red
@@ -2593,4 +2841,87 @@ if ($doRenameComputer) {
     Write-Host "`n[Phase 5] Renaming computer '$env:COMPUTERNAME' -> '$newComputerName'..." -ForegroundColor Green
 
     # Server + domain-joined = high risk. Breaks AD trust, Kerberos SPNs,
-    # certificates boun
+    # certificates bound to hostname, GPO assignments, SQL connection strings,
+    # etc. Require an explicit typed confirmation - not just Y.
+    $proceedRename = $true
+    if ($IsServer -and $ServerInfo.IsDomainJoined) {
+        Write-Host ""
+        Write-Host "  WARNING: This is a DOMAIN-JOINED SERVER." -ForegroundColor Yellow
+        Write-Host "  Renaming will:" -ForegroundColor Yellow
+        Write-Host "    - Break AD trust until re-joined" -ForegroundColor Yellow
+        Write-Host "    - Invalidate Kerberos SPNs (SQL/IIS/SMB)" -ForegroundColor Yellow
+        Write-Host "    - Break any cert bound to current hostname" -ForegroundColor Yellow
+        Write-Host "    - Likely require manual cleanup in AD Users & Computers" -ForegroundColor Yellow
+        Write-Host ""
+        $typed = Read-Host "  Type 'CONFIRM' (all caps) to proceed, or anything else to skip"
+        if ($typed -ne 'CONFIRM') {
+            Write-Host "  Rename skipped (confirmation not typed)." -ForegroundColor Yellow
+            $proceedRename = $false
+        }
+    }
+
+    if ($proceedRename) {
+        try {
+            Rename-Computer -NewName $newComputerName -Force -ErrorAction Stop
+            Write-Host "  computer renamed (takes effect on reboot)." -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  ERROR renaming computer: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+} else {
+    Write-Host "`n[Phase 5] Computer rename: SKIPPED (per your choice)." -ForegroundColor DarkGray
+}
+
+#endregion
+
+#region --- 6. Wrap up + reboot ----------------------------------------------
+
+if (Test-Path $StateFile) {
+    Remove-Item -Path $StateFile -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "  iDezign Cleanup Utility - all phases complete." -ForegroundColor Cyan
+if ($doRenameComputer -or $doRenameUser -or $doInstallClaude) {
+    Write-Host "  A reboot is required for renames / feature changes to take effect." -ForegroundColor Cyan
+}
+Write-Host ""
+Write-Host "  REMINDER: before capturing your image, delete the staging dir:" -ForegroundColor Yellow
+Write-Host "    Remove-Item C:\iDezign_Cleanup_Utility -Recurse -Force" -ForegroundColor Yellow
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Stop transcript before the user-facing reboot prompt so the log file is
+# closed and flushed even if the user takes a long time to answer.
+try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+
+if (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
+    $reasonParts = @()
+    if ($doRenameComputer) { $reasonParts += 'computer rename' }
+    if ($doRenameUser)     { $reasonParts += 'user rename' }
+    if ($doInstallClaude)  { $reasonParts += 'Claude install' }
+    $reason = if ($reasonParts) { "Apply: $($reasonParts -join ', ')" } else { 'Finalize cleanup' }
+
+    $rebooted = Invoke-RebootChoice `
+        -Reason $reason `
+        -CountdownSeconds 30 `
+        -DeferMessage "Reboot manually before capturing the image. Also delete C:\iDezign_Cleanup_Utility first."
+
+    if (-not $rebooted) {
+        Write-Host "Reboot skipped. Remember to restart before capturing your image." -ForegroundColor Yellow
+        Write-Host "And don't forget to delete C:\iDezign_Cleanup_Utility before capture." -ForegroundColor Yellow
+    }
+} else {
+    # Fallback - module missing
+    $reboot = Read-Host "Reboot now? (Y/N)"
+    if ($reboot -match '^(y|yes)$') {
+        Write-Host "Rebooting in 30 seconds. Save anything important..." -ForegroundColor Yellow
+        shutdown /r /t 30 /c "iDezign Cleanup Utility complete. Rebooting."
+    } else {
+        Write-Host "Reboot skipped. Remember to restart before capturing your image." -ForegroundColor Yellow
+        Write-Host "And don't forget to delete C:\iDezign_Cleanup_Utility before capture." -ForegroundColor Yellow
+    }
+}
+
+#endregion
