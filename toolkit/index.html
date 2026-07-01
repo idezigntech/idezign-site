@@ -257,7 +257,7 @@ Or <a href="/dist/iDezign-Toolkit.zip" download style="color:var(--red);border-b
     <div class="eyebrow reveal d1">Also worth installing</div>
     <h1 class="reveal d2" style="font-size:clamp(30px,3.6vw,46px);margin-bottom:18px;max-width:22ch">Other tools <span class="accent">we trust</span>.</h1>
     <p class="lede reveal d3" style="margin-bottom:46px">The free utilities I install on nearly every Windows build. Use the same ones I do — no installer bundles, no junkware.</p>
-    <div class="tgrid" style="grid-template-columns:repeat(3,1fr);gap:28px">
+    <div id="alsoWorthGrid" class="tgrid" style="grid-template-columns:repeat(3,1fr);gap:28px">
 
       <a class="tool reveal d2" href="https://custom.teamviewer.com/idhelp" target="_blank" rel="noopener" style="text-decoration:none">
         <div class="tick"></div>
@@ -319,6 +319,66 @@ Or <a href="/dist/iDezign-Toolkit.zip" download style="color:var(--red);border-b
         <div class="foot"><span class="meta">Open-Shell · Free / Open source</span></div>
       </a>
 
+      <a class="tool reveal d2" href="ms-settings:windowsupdate" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">Windows Update</h2>
+          <span class="badge soon" style="background:#eef5ff;color:#1859a8">Built-in</span>
+        </div>
+        <p class="desc">Opens Settings → Windows Update on this PC. Click "Check for updates" from there. Most "my computer is slow / weird" calls trace back to a missing update.</p>
+        <div class="foot"><span class="meta">Microsoft · Built into Windows</span></div>
+      </a>
+
+      <a class="tool reveal d3" href="https://www.dell.com/support/kbdoc/en-us/000177325/dell-command-update" target="_blank" rel="noopener" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">Dell Command | Update</h2>
+          <span class="badge soon" style="background:#e6faf5;color:#0a7554">Drivers</span>
+        </div>
+        <p class="desc">Dell's own driver + BIOS updater for Dell hardware. What Diagnostics tries to install (via winget) and scan with. Install manually here if winget isn't available on the machine.</p>
+        <div class="foot"><span class="meta">Dell · Free</span></div>
+      </a>
+
+      <a class="tool reveal d4" href="https://www.intel.com/dsa" target="_blank" rel="noopener" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">Intel Driver & Support Assistant</h2>
+          <span class="badge soon" style="background:#e6faf5;color:#0a7554">Drivers</span>
+        </div>
+        <p class="desc">Intel's driver checker for Intel CPU/GPU/NIC/WiFi/Bluetooth. Diagnostics points you here when it detects Intel silicon without DSA installed — grab it to keep chipset drivers current.</p>
+        <div class="foot"><span class="meta">Intel · Free</span></div>
+      </a>
+
+      <a class="tool reveal d2" href="https://support.hp.com/us-en/help/hp-support-assistant" target="_blank" rel="noopener" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">HP Support Assistant</h2>
+          <span class="badge soon" style="background:#e6faf5;color:#0a7554">Drivers</span>
+        </div>
+        <p class="desc">HP's driver + firmware + diagnostics utility for HP hardware. Cleanup auto-installs it on HP machines. Grab it manually here if you're on HP but winget isn't available.</p>
+        <div class="foot"><span class="meta">HP · Free</span></div>
+      </a>
+
+      <a class="tool reveal d3" href="https://apps.microsoft.com/detail/9wzdncrfj4mv" target="_blank" rel="noopener" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">Lenovo Vantage</h2>
+          <span class="badge soon" style="background:#e6faf5;color:#0a7554">Drivers</span>
+        </div>
+        <p class="desc">Lenovo's system control panel — drivers, warranty, battery health, hardware tuning. Cleanup auto-installs it from the Microsoft Store on Lenovo machines.</p>
+        <div class="foot"><span class="meta">Lenovo · Free (Microsoft Store)</span></div>
+      </a>
+
+      <a class="tool reveal d4" href="https://apps.microsoft.com/detail/9p71vc01sbtl" target="_blank" rel="noopener" style="text-decoration:none">
+        <div class="tick"></div>
+        <div class="head">
+          <h2 style="font-size:21px">Realtek Audio Console</h2>
+          <span class="badge soon" style="background:#e6faf5;color:#0a7554">Drivers</span>
+        </div>
+        <p class="desc">The current audio control panel for Realtek codecs (successor to Realtek HD Audio Manager). Cleanup auto-installs it when Realtek audio hardware is detected.</p>
+        <div class="foot"><span class="meta">Realtek · Free (Microsoft Store)</span></div>
+      </a>
+
     </div>
   </div>
 </section>
@@ -360,8 +420,19 @@ Or <a href="/dist/iDezign-Toolkit.zip" download style="color:var(--red);border-b
 </div>
 </footer>
 <script>
+// ============================================================
+// Manifest-driven rendering
+// - iDezign_Versions.json => main toolkit tile (features list + badge)
+// - iDezign_SiteContent.json => "Also worth installing" tile grid
+// Both fetched from jsDelivr for fast cache invalidation.
+// If a fetch fails, the hardcoded HTML fallback stays as-is.
+// ============================================================
 (function(){
-fetch("https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/iDezign_Versions.json?t="+Date.now(),{cache:"no-store"})
+var BASE = "https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/";
+var t = Date.now();
+
+// --- 1. Main toolkit tile ---------------------------------
+fetch(BASE + "iDezign_Versions.json?t=" + t, {cache:"no-store"})
 .then(function(r){return r.ok?r.json():null})
 .then(function(mf){
 if(!mf)return;
@@ -378,6 +449,45 @@ return '<li><span class="k">'+icon+'</span><span class="t"><b>'+name+'</b>'+dt+'
 }
 var b=document.querySelector(".tool .badge.ver");
 if(b && mf.toolkitVersion) b.textContent="v"+mf.toolkitVersion;
+}).catch(function(){});
+
+// --- 2. "Also worth installing" grid ----------------------
+var CAT_STYLE = {
+  branded:      {cls:"badge ver",  style:""},
+  diagnostics:  {cls:"badge soon", style:"background:#fff7e6;color:#a06400"},
+  productivity: {cls:"badge soon", style:"background:#eef5ff;color:#1859a8"},
+  customization:{cls:"badge soon", style:"background:#f3eaff;color:#5b2da6"},
+  builtin:      {cls:"badge soon", style:"background:#eef5ff;color:#1859a8"},
+  drivers:      {cls:"badge soon", style:"background:#e6faf5;color:#0a7554"}
+};
+function esc(s){return String(s||"").replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]});}
+function renderTile(item, i){
+  var cat = CAT_STYLE[item.category] || CAT_STYLE.productivity;
+  var delay = ["d2","d3","d4"][i%3];
+  var badgeAttrs = 'class="'+cat.cls+'"';
+  if (cat.style) badgeAttrs += ' style="'+cat.style+'"';
+  // Only http(s) links get target="_blank" — protocol URLs like
+  // ms-settings: trigger the OS handler and shouldn't open a new tab.
+  var isWeb = /^https?:/i.test(item.url||'');
+  var linkAttrs = isWeb ? ' target="_blank" rel="noopener"' : '';
+  return ''+
+    '<a class="tool reveal '+delay+'" href="'+esc(item.url)+'"'+linkAttrs+' style="text-decoration:none">'+
+      '<div class="tick"></div>'+
+      '<div class="head">'+
+        '<h2 style="font-size:21px">'+esc(item.name)+'</h2>'+
+        '<span '+badgeAttrs+'>'+esc(item.badgeText||item.category)+'</span>'+
+      '</div>'+
+      '<p class="desc">'+esc(item.description)+'</p>'+
+      '<div class="foot"><span class="meta">'+esc(item.meta)+'</span></div>'+
+    '</a>';
+}
+fetch(BASE + "iDezign_SiteContent.json?t=" + t, {cache:"no-store"})
+.then(function(r){return r.ok?r.json():null})
+.then(function(sc){
+if(!sc || !sc.recommendedTools) return;
+var grid = document.getElementById("alsoWorthGrid");
+if(!grid) return;
+grid.innerHTML = sc.recommendedTools.map(renderTile).join("\n");
 }).catch(function(){});
 })();
 </script>
