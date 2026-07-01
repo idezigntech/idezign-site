@@ -3,6 +3,15 @@ name: Check external URLs
 # Catches URL rot in scripts + website. Runs weekly (Monday 12:00 UTC =
 # ~5am Pacific), plus on any push that touches script/site content, plus
 # manually via the Actions tab "Run workflow" button.
+#
+# On failure: auto-opens (or updates) a GitHub Issue titled
+# "Dead URL(s) detected by weekly check" with a table of failing URLs
+# and which files reference them. GitHub emails Eric on new issues by
+# default, so this is the notification path.
+
+permissions:
+  contents: read
+  issues: write
 
 on:
   schedule:
@@ -25,5 +34,58 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan external URLs
+        id: scan
         shell: pwsh
         run: ./.github/scripts/check-external-urls.ps1
+
+      - name: Open issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const dateStr = new Date().toISOString().split('T')[0];
+
+            let body = `Automated URL rot check failed on **${dateStr}**.\n\n`;
+            body += `[View the failed run](${runUrl})\n\n`;
+
+            try {
+              const report = fs.readFileSync('url-check-report.md', 'utf8');
+              body += `## Failing URLs\n\n${report}\n`;
+            } catch (e) {
+              body += '_No detailed report file was written - check the run log for the failure list._\n';
+            }
+
+            body += `\n---\nOnce the dead URL(s) are fixed, close this issue. `;
+            body += `A new issue will only be opened when this one is closed and the check fails again.`;
+
+            // Dedupe: if a url-rot issue is already open, comment on it instead of spamming a new one
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'url-rot',
+              per_page: 5
+            });
+
+            if (existing.length > 0) {
+              const num = existing[0].number;
+              console.log(`Existing url-rot issue #${num} is open - appending a comment.`);
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: num,
+                body: `URL rot check failed again on ${dateStr}. [Run](${runUrl})`
+              });
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Dead URL(s) detected by weekly check (${dateStr})`,
+              body,
+              labels: ['url-rot', 'automated']
+            });
