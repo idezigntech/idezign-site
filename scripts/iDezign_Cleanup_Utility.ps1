@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.01-v3.2-vendor-drivers'
+$ScriptVersion = '2026.07.01-v3.2-vendor-drivers-r2'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -1841,7 +1841,7 @@ if ($scanType -ne 'None') {
 # Adds path and process exclusions to Microsoft Defender so it doesn't
 # real-time-scan SQL Server data files (.mdf/.ldf) or Dentrix runtime
 # directories. This is Microsoft's documented best practice for SQL Server
-# (https://learn.microsoft.com/sql/database-engine/configure-windows/configure-antivirus-software-to-work-with-sql-server).
+# (https://learn.microsoft.com/en-us/troubleshoot/sql/database-engine/security/antivirus-and-sql-server).
 # Without these exclusions, Dentrix can become noticeably slow during
 # patient lookups, scheduling, and chart access, especially on practices
 # with large patient databases.

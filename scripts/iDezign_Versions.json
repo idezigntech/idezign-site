@@ -4,7 +4,7 @@
   "toolkitVersion": "3.2",
   "scripts": {
     "iDezign_Common.psm1": "2026.06.30-v3.1-time-drift",
-    "iDezign_Cleanup_Utility.ps1": "2026.07.01-v3.2-vendor-drivers",
+    "iDezign_Cleanup_Utility.ps1": "2026.07.01-v3.2-vendor-drivers-r2",
     "iDezign_Diagnostics.ps1": "2026.07.01-v3.1.1-tv-url",
     "iDezign_Remediation.ps1": "2026.06.30-v3.0-pdf-merge",
     "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
