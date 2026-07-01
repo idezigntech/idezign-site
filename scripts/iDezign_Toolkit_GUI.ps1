@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.06.29-gui-v2.9.1-bigwindow'
+$ScriptVersion = '2026.06.02-gui-v2.5'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -77,12 +77,11 @@ foreach ($cand in @('iDezign-logo-trim.png','iDezign-ai-logo-v2-transparent.png'
 # --- Manifest (single source of truth) --------------------------------------
 $ManifestPath = Join-Path $ScriptDir 'iDezign_Versions.json'
 $DefaultToolDefs = @(
-    [PSCustomObject]@{ key='Diagnostics'; displayName='Diagnostics';        subtitle='Health check + HTML report';        scriptFile='iDezign_Diagnostics.ps1';       destructive=$false; order=1 }
-    [PSCustomObject]@{ key='Cleanup';     displayName='Cleanup';            subtitle='Maintenance + imaging prep';        scriptFile='iDezign_Cleanup_Utility.ps1';   destructive=$false; order=2 }
-    [PSCustomObject]@{ key='Remediation'; displayName='Remediation';        subtitle='Interactive issue fixer';           scriptFile='iDezign_Remediation.ps1';       destructive=$false; order=3 }
-    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE';      subtitle='Sysprep for imaging (destructive)'; scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=4 }
-    [PSCustomObject]@{ key='SavePDF';     displayName='Save PDF to Desktop';subtitle='Latest Diagnostics report -> PDF';  scriptFile='iDezign_SavePDF.ps1';           destructive=$false; order=5 }
-    [PSCustomObject]@{ key='Migrate';     displayName='Migrate';            subtitle='Back up + move user data';          scriptFile='iDezign_Migration_Utility.ps1'; destructive=$false; order=6 }
+    [PSCustomObject]@{ key='Cleanup';     displayName='Cleanup';       subtitle='Maintenance + imaging prep';       scriptFile='iDezign_Cleanup_Utility.ps1'; destructive=$false; order=1 }
+    [PSCustomObject]@{ key='Diagnostics'; displayName='Diagnostics';   subtitle='Health check + HTML report';        scriptFile='iDezign_Diagnostics.ps1';     destructive=$false; order=2 }
+    [PSCustomObject]@{ key='Remediation'; displayName='Remediation';   subtitle='Interactive issue fixer';           scriptFile='iDezign_Remediation.ps1';     destructive=$false; order=3 }
+    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)'; scriptFile='iDezign_Reset_to_OOBE.ps1';   destructive=$true;  order=4 }
+    [PSCustomObject]@{ key='VMBox';       displayName='VM Sandbox';    subtitle='Hyper-V test VMs';                  scriptFile='iDezign_VM_Sandbox.ps1';      destructive=$false; order=5 }
 )
 $ToolDefs = $null
 $ToolkitVersion = '2.0'
@@ -110,7 +109,7 @@ Write-Diag ("manifest loaded: {0} tools, toolkit v{1}" -f $ToolDefs.Count, $Tool
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="iDezign Toolkit"
-        Height="700" Width="400"
+        Height="430" Width="400"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="True" Topmost="False"
         Background="#FFFFFF"
@@ -343,16 +342,7 @@ $row_Click = {
 }
 
 function New-ScriptRow {
-    # v2.8 visual upgrade:
-    #   * Prefixes each row with the emoji from the manifest "icon" field
-    #     (Segoe UI Emoji forced so PS 5.1 / WPF renders the glyphs reliably).
-    #   * For destructive tools, appends a small crimson "DESTRUCTIVE" pill
-    #     badge next to the name, in addition to the existing red text colour.
-    #   * Subtitle column stays right-aligned (auto width) as before.
     param($Def)
-
-    $brush = New-Object System.Windows.Media.BrushConverter
-
     $btn = New-Object System.Windows.Controls.Button
     $btn.Style = $window.FindResource('ScriptRow')
     $btn.Tag   = $Def.key
@@ -365,54 +355,17 @@ function New-ScriptRow {
     $g.ColumnDefinitions.Add($c1)
     $g.ColumnDefinitions.Add($c2)
 
-    # Left side = horizontal StackPanel of [icon] [name] [optional DESTRUCTIVE badge]
-    $left = New-Object System.Windows.Controls.StackPanel
-    $left.Orientation = 'Horizontal'
-    $left.VerticalAlignment = 'Center'
-
-    if ($Def.icon) {
-        $iconBlock = New-Object System.Windows.Controls.TextBlock
-        $iconBlock.Text = [string]$Def.icon
-        $iconBlock.FontSize = 16
-        $iconBlock.VerticalAlignment = 'Center'
-        $iconBlock.Margin = [System.Windows.Thickness]::new(0,0,10,0)
-        # Force the emoji font so PS5.1/WPF picks colour glyphs over fallback boxes
-        try { $iconBlock.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI Emoji' } catch { }
-        [void]$left.Children.Add($iconBlock)
-    }
-
     $name = New-Object System.Windows.Controls.TextBlock
     $name.Text = [string]$Def.displayName
     $name.FontSize = 13
     $name.VerticalAlignment = 'Center'
     if ($Def.destructive) {
-        $name.Foreground = $brush.ConvertFromString('#A82828')
-        $name.FontWeight = 'SemiBold'
+        $name.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#A82828')
     } else {
-        $name.Foreground = $brush.ConvertFromString('#161616')
+        $name.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#161616')
     }
-    [void]$left.Children.Add($name)
-
-    if ($Def.destructive) {
-        $badge = New-Object System.Windows.Controls.Border
-        $badge.Background = $brush.ConvertFromString('#A82828')
-        $badge.CornerRadius = New-Object System.Windows.CornerRadius(3)
-        $badge.Padding = [System.Windows.Thickness]::new(6,1,6,2)
-        $badge.Margin = [System.Windows.Thickness]::new(8,0,0,0)
-        $badge.VerticalAlignment = 'Center'
-
-        $badgeText = New-Object System.Windows.Controls.TextBlock
-        $badgeText.Text = 'DESTRUCTIVE'
-        $badgeText.FontSize = 9
-        $badgeText.FontWeight = 'Bold'
-        $badgeText.Foreground = $brush.ConvertFromString('#FFFFFF')
-        $badge.Child = $badgeText
-
-        [void]$left.Children.Add($badge)
-    }
-
-    [System.Windows.Controls.Grid]::SetColumn($left, 0)
-    [void]$g.Children.Add($left)
+    [System.Windows.Controls.Grid]::SetColumn($name, 0)
+    [void]$g.Children.Add($name)
 
     if ($Def.subtitle) {
         $sub = New-Object System.Windows.Controls.TextBlock
@@ -420,7 +373,7 @@ function New-ScriptRow {
         $sub.FontSize = 11
         $sub.VerticalAlignment = 'Center'
         $sub.Margin = [System.Windows.Thickness]::new(12,0,0,0)
-        $sub.Foreground = $brush.ConvertFromString('#8A8A8A')
+        $sub.Foreground = (New-Object System.Windows.Media.BrushConverter).ConvertFromString('#8A8A8A')
         [System.Windows.Controls.Grid]::SetColumn($sub, 1)
         [void]$g.Children.Add($sub)
     }
@@ -482,6 +435,52 @@ try {
 } catch { }
 
 Set-Status ("Ready - {0} scripts loaded." -f $ToolDefs.Count)
+
+# --- Background update check (GitHub Releases) -------------------------------
+# Runs the API call in a separate runspace so the GUI never blocks on it. A
+# DispatcherTimer polls completion and, if a newer tag is found, updates the
+# status line in red. Fails silently on no network / API errors / no releases.
+$updatePS = $null
+$updateHandle = $null
+try {
+    $updatePS = [System.Management.Automation.PowerShell]::Create()
+    [void]$updatePS.AddScript({
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $r = Invoke-RestMethod -Uri 'https://api.github.com/repos/idezigntech/idezign-site/releases/latest' `
+                                   -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            return $r.tag_name
+        } catch { return $null }
+    })
+    $updateHandle = $updatePS.BeginInvoke()
+
+    $updateTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $updateTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+    $updateTimer.add_Tick({
+        if ($updateHandle.IsCompleted) {
+            $updateTimer.Stop()
+            $tag = $null
+            try { $tag = $updatePS.EndInvoke($updateHandle) | Select-Object -First 1 } catch { }
+            try { $updatePS.Dispose() } catch { }
+            if ($tag) {
+                $latest  = ($tag -replace '^v','').Trim()
+                $current = $ToolkitVersion.Trim()
+                if ($latest -and $latest -ne $current) {
+                    Set-Status ("Update available: v{0}  (you have v{1})" -f $latest, $current) '#A82828'
+                    Write-Diag ("update check: newer release v{0} (local v{1})" -f $latest, $current)
+                } else {
+                    Write-Diag ("update check: up to date (v{0})" -f $current)
+                }
+            } else {
+                Write-Diag 'update check: skipped (no network or no release)'
+            }
+        }
+    })
+    $updateTimer.Start()
+} catch {
+    Write-Diag ("update check setup failed: {0}" -f $_.Exception.Message)
+}
+
 Write-Diag 'CP: about to present window'
 try {
     if (-not [System.Windows.Application]::Current) {
@@ -501,3 +500,4 @@ try {
     try { [void]$window.ShowDialog() } catch { }
 }
 Write-Diag 'CP: window closed'
+            

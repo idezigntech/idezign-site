@@ -1,0 +1,55 @@
+iDezign Toolkit - Changelog
+===========================
+Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big changes.
+The version shown in the launcher's title bar comes from "toolkitVersion" in
+iDezign_Versions.json - bump it there with every change.
+
+v2.6  - 2026-06-02  - All-profiles cleanup
+  * Cleanup script Phase 2 now iterates Win32_UserProfile and cleans Temp,
+    Edge & Chrome caches, Recent items, thumbnail/icon caches and INetCache
+    for EVERY real user profile on the machine - not just the current admin.
+  * Profiles whose user is currently logged in are skipped automatically
+    (active processes hold cache files open, so cleaning would error out).
+    The skipped user is announced before Phase 2 starts so the tech can
+    decide whether to log them off and re-run.
+  * Profile scope banner: "N user profile(s) found - X idle (will clean),
+    Y logged-in (will skip)" prints once before Phase 2 begins.
+  * Real-world impact: on shared/multi-user shop machines this typically
+    finds 2-10x more reclaimable space than the v2.5 single-user pass.
+
+v2.5  - 2026-06-02  - GitHub auto-update check + GitHub release
+  * GUI now checks GitHub Releases (idezigntech/toolkit/releases/latest)
+    on launch in a background runspace. If a newer tag than the local
+    toolkitVersion is published, the status bar shows "Update available: vX.Y"
+    in red. Fails silently with no network / API errors / no releases yet, so
+    offline clients still see a normal "Ready." status.
+  * Companion JS on resources.html auto-fetches the same latest release and
+    updates the "vX.Y" badge + date on the Toolkit tile so the public download
+    page never goes stale either.
+  * First public release on github.com/idezigntech/toolkit.
+
+v2.3  - 2026-05-25  - Footer fix
+  * Fixed the footer where a long status line (e.g. after launching a tool)
+    overlapped the "iDezign Technology" label. Status and label now sit in
+    separate columns; long status text trims with an ellipsis instead of
+    colliding. Shortened the launch status message too.
+
+v2.2  - 2026-05-25  - Save report as PDF
+  * New menu item "Save PDF to Desktop" (item 5): converts the latest
+    Diagnostics HTML report to a dated PDF on the Desktop using Microsoft Edge's
+    built-in headless print-to-PDF (no extra software). Reveals the file when done.
+
+v2.1  - 2026-05-25  - Remediation feedback + service-check cleanup
+  * Remediation now announces every check as it runs ("checking X ...") so the
+    tech sees the full health pass, not just the problems found.
+  * Essential-services check no longer flags Manual / trigger-start services
+    (msiserver, wuauserv on Win10/11) - only Automatic services that are
+    actually stopped are reported. Removes the false positives.
+
+v2.0  - 2026-05-25  - Web-style redesign (major)
+  * New light launcher matching the iDezign.ai brand: white background, Jost/
+    Century Gothic font, dark-on-white logo, crimson divider + "SCRIPTS" label,
+    vertical script list (replaces the dark crimson-tile layout).
+  * Menu is manifest-driven (iDezign_Versions.json "tools"): real scripts only.
+  * Each tool launches in its OWN elevated window (separate-window model) - the
+    reliable approach for tools that self-stage and reboot
