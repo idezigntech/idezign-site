@@ -4,6 +4,17 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.1.1 - 2026-07-01 - TeamViewer HOST URL updated to custom.teamviewer.com/idhelp
+  * iDezign_Cleanup_Utility.ps1 + iDezign_Diagnostics.ps1: the branded
+    TeamViewer Host download URL was 'get.teamviewer.com/idezign' - that
+    endpoint is retired. All references now point at the new location
+    'custom.teamviewer.com/idhelp' (Cleanup Phase 1e installs from here;
+    Diagnostics section 11 verifies + reports this as the expected source).
+  * The /help/ page (idezign.ai/help/) still uses its OWN URL
+    'custom.teamviewer.com/idezignqs' - that's the QuickSupport (one-shot,
+    no-install remote session) tool, which is a different download than
+    the branded Host and continues to have its own dedicated URL.
+
 v3.1 - 2026-06-30 - Server-safe cleanup + REPAIR account fallback + real time drift check
   * Cleanup: on SERVERS the network-adapter DHCP conversion is now SKIPPED.
     Static IP is preserved as-is; the config is still reported for the record.
