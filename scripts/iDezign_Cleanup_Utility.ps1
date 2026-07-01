@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.01-v3.1.1-tv-url'
+$ScriptVersion = '2026.07.01-v3.2-vendor-drivers'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -188,6 +188,130 @@ function Test-PendingReboot {
     } catch { }
 
     return $signals
+}
+
+#endregion
+
+#region --- Helpers: winget / vendor driver tool install ---------------------
+# Two helpers used by Phase 1l (vendor driver management tools).
+#
+# Ensure-Winget - if winget isn't on PATH, try to install the App Installer
+# MSIX package (which provides winget) from aka.ms/getwinget. This is the same
+# package Microsoft ships to the Microsoft Store. Server SKUs may not support
+# AppX at all - in that case we return $false and callers fall through to the
+# browser-download fallback.
+#
+# Install-OrUpgrade-Winget - one-shot "make sure $Name is installed and
+# current" helper. Logic per Eric's spec:
+#   - If already installed  -> run 'winget upgrade' (always log the outcome)
+#   - If not installed      -> run 'winget install'
+#   - If winget unavailable -> open $FallbackUrl in the default browser and
+#                              continue silently (no Y/N prompt)
+# All winget commands run with --silent --disable-interactivity + the two
+# --accept-*-agreements flags so nothing prompts the tech mid-run.
+
+function Ensure-Winget {
+    if (Get-Command winget -ErrorAction SilentlyContinue) { return $true }
+
+    Write-Host "  winget not found - attempting to install App Installer..." -ForegroundColor DarkGray
+
+    # aka.ms/getwinget redirects to the latest release. Fall through to the
+    # direct GitHub URL if the redirect fails.
+    $urls = @(
+        'https://aka.ms/getwinget',
+        'https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle'
+    )
+    $tmp = Join-Path $env:TEMP 'AppInstaller.msixbundle'
+    $downloaded = $false
+    foreach ($url in $urls) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            $downloaded = $true
+            break
+        } catch { continue }
+    }
+    if (-not $downloaded) {
+        Write-Host "    Could not download App Installer package." -ForegroundColor Yellow
+        return $false
+    }
+
+    try {
+        Add-AppxPackage -Path $tmp -ErrorAction Stop
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "    Add-AppxPackage failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    # PATH may not have picked up winget yet - refresh from machine + user env
+    $env:Path = ([Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User'))
+
+    return [bool](Get-Command winget -ErrorAction SilentlyContinue)
+}
+
+function Install-OrUpgrade-Winget {
+    param(
+        [Parameter(Mandatory)][string]$Name,       # Human name for logging
+        [Parameter(Mandatory)][string]$Id,         # Winget package ID
+        [string]$Source = 'winget',                # 'winget' or 'msstore'
+        [string]$FallbackUrl                       # Opened in browser if winget can't
+    )
+
+    Write-Host "  $Name" -ForegroundColor Cyan
+
+    if (-not (Ensure-Winget)) {
+        Write-Host "    winget unavailable - opening download page." -ForegroundColor Yellow
+        if ($FallbackUrl) {
+            try { Start-Process $FallbackUrl | Out-Null } catch { }
+            Write-Host "    URL: $FallbackUrl" -ForegroundColor DarkGray
+        }
+        return
+    }
+
+    # Detect existing install. winget list --id is exact-match with -e flag.
+    $listOut = & winget list --id $Id --exact --source $Source --accept-source-agreements 2>&1 | Out-String
+    $alreadyInstalled = ($LASTEXITCODE -eq 0) -and ($listOut -match [regex]::Escape($Id))
+    $action = if ($alreadyInstalled) { 'upgrade' } else { 'install' }
+
+    if ($alreadyInstalled) {
+        Write-Host "    Already installed. Running winget upgrade to ensure current..." -ForegroundColor DarkGray
+    } else {
+        Write-Host "    Not installed. Running winget install..." -ForegroundColor DarkGray
+    }
+
+    $wingetArgs = @(
+        '--id', $Id, '--exact',
+        '--source', $Source,
+        '--accept-package-agreements', '--accept-source-agreements',
+        '--silent', '--disable-interactivity'
+    )
+
+    try {
+        $output = & winget $action @wingetArgs 2>&1 | Out-String
+        $rc = $LASTEXITCODE
+
+        # Common exit codes:
+        #   0 = success
+        #   -1978335189 (0x8A15002B) = No available upgrade found (upgrade path)
+        #   -1978335212 = No installed package (list path - handled above)
+        if ($rc -eq 0) {
+            Write-Host "    $Name : $action OK." -ForegroundColor Green
+        } elseif ($action -eq 'upgrade' -and ($rc -eq -1978335189 -or $output -match 'No available upgrade|No newer package')) {
+            Write-Host "    $Name : already current (no upgrade available)." -ForegroundColor Green
+        } else {
+            Write-Host "    $Name : winget $action returned rc=$rc." -ForegroundColor Yellow
+            if ($FallbackUrl) {
+                Write-Host "    Opening fallback download page." -ForegroundColor Yellow
+                try { Start-Process $FallbackUrl | Out-Null } catch { }
+            }
+        }
+    } catch {
+        Write-Host "    $Name : winget $action threw: $($_.Exception.Message)" -ForegroundColor Yellow
+        if ($FallbackUrl) {
+            try { Start-Process $FallbackUrl | Out-Null } catch { }
+        }
+    }
 }
 
 #endregion
@@ -338,7 +462,7 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ""
     Write-Host "  Phases:"
     Write-Host "    0. Windows Update loop  (may reboot 1-4 times automatically)"
-    Write-Host "    1. Install + config     (Apps/Power/OpenShl/Net/Scan/Excl/OneDrive - optional)"
+    Write-Host "    1. Install + config     (Apps/Power/OpenShl/Vendor drvs/Net/Scan/Excl/OneDrive - optional)"
     Write-Host "    2. Cleanup              (temp, Windows.old, event logs, DISM, etc.)"
     Write-Host "    3. Ensure REPAIR admin account exists (always runs)"
     Write-Host "    4. Rename user account  (optional)"
@@ -415,6 +539,21 @@ if (-not $ResumeAfterUpdate) {
         $answer = Read-Host "  Apply iDezign default settings (Win7-style menu)? (Y/N)"
         $doApplyOpenShellDefaults = $answer -match '^(y|yes)$'
     }
+
+    # --- Install vendor driver management tools (hardware-aware, skipped on servers) ---
+    # Detects hardware and auto-installs the vendor's driver management app so
+    # firmware/driver updates are one-click for the end user after we leave:
+    #   Dell hw  -> Dell Command | Update       (winget)
+    #   HP hw    -> HP Support Assistant        (winget)
+    #   Lenovo   -> Lenovo Vantage              (msstore)
+    #   Intel    -> Intel Driver & Support Asst (winget)
+    #   Realtek  -> Realtek Audio Console       (msstore)
+    # Each detection is checked at apply time (Phase 1l) via CIM queries; we
+    # don't pre-run detection here so the tech can enable this even on a mixed
+    # fleet where the exact hardware varies.
+    Write-Host ""
+    $answer = Read-Host "Install vendor driver tools (Dell CU / HP SA / Lenovo Vantage / Intel DSA / Realtek)? (Y/N)"
+    $doInstallVendorDrivers = $answer -match '^(y|yes)$'
 
     # --- Set network profile to Private + enable sharing/discovery ---
     # Fresh installs default networks to Public, which blocks SMB/file sharing,
@@ -522,6 +661,7 @@ if (-not $ResumeAfterUpdate) {
         DoConfigurePower         = [bool]$doConfigurePower
         DoInstallOpenShell       = [bool]$doInstallOpenShell
         DoApplyOpenShellDefaults = [bool]$doApplyOpenShellDefaults
+        DoInstallVendorDrivers   = [bool]$doInstallVendorDrivers
         DoSetNetworkPrivate      = [bool]$doSetNetworkPrivate
         ScanType                 = [string]$scanType
         DoDentrixExclusions      = [bool]$doDentrixExclusions
@@ -556,6 +696,7 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Install TV Host : " + ($(if($doInstallTV){'YES (iDezign branded)'}else{'NO'})))
     Write-Host ("  Download MWB    : " + ($(if($doDownloadMWB){'YES (to ~\Downloads)'}else{'NO'})))
     Write-Host ("  Install OpenShl : " + $openShellSummary)
+    Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel/Realtek per-hw)'}else{'NO'})))
     Write-Host ("  Power settings  : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr / no sleep/hibernate)'}else{'NO'})))
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
     Write-Host ("  Defender scan   : " + $scanSummary)
@@ -595,6 +736,7 @@ if (-not $ResumeAfterUpdate) {
             $doConfigurePower   = [bool]$state.DoConfigurePower
             $doInstallOpenShell = [bool]$state.DoInstallOpenShell
             $doApplyOpenShellDefaults = [bool]$state.DoApplyOpenShellDefaults
+            $doInstallVendorDrivers = [bool]$state.DoInstallVendorDrivers
             $doSetNetworkPrivate = [bool]$state.DoSetNetworkPrivate
             # ScanType is the new field. Fall back to DoFullScan for older state files.
             if ($null -ne $state.ScanType -and $state.ScanType -ne '') {
@@ -633,6 +775,10 @@ if (-not $ResumeAfterUpdate) {
             if ($null -eq $state.DoApplyOpenShellDefaults) {
                 $state | Add-Member -NotePropertyName 'DoApplyOpenShellDefaults' -NotePropertyValue $false -Force
             }
+            if ($null -eq $state.DoInstallVendorDrivers) {
+                $state | Add-Member -NotePropertyName 'DoInstallVendorDrivers' -NotePropertyValue $false -Force
+                $doInstallVendorDrivers = $false
+            }
             if ($null -eq $state.DoSetNetworkPrivate) {
                 $state | Add-Member -NotePropertyName 'DoSetNetworkPrivate' -NotePropertyValue $false -Force
             }
@@ -659,6 +805,7 @@ if (-not $ResumeAfterUpdate) {
             $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallTV = $false
             $doConfigurePower = $false
             $doInstallOpenShell = $false; $doApplyOpenShellDefaults = $false
+            $doInstallVendorDrivers = $false
             $doSetNetworkPrivate = $false; $scanType = 'None'; $doDentrixExclusions = $false
             $doNukeOneDrive = $false; $doStripTeamsPersonal = $false; $doStripMSnags = $false
             $doRenameComputer = $false; $doRenameUser = $false
@@ -2115,6 +2262,93 @@ if ($doNukeOneDrive) {
     }
 } else {
     Write-Host "`n[Phase 1k] OneDrive nuke: SKIPPED." -ForegroundColor DarkGray
+}
+
+# --- 1l. Vendor driver management tools (hardware-aware) ---
+# Detects vendor and silicon at run time and installs the matching driver
+# management tool. Client-only phase - vendor consumer tools (Dell CU, HP SA,
+# Lenovo Vantage, Realtek Audio Console) are the wrong shape for server SKUs
+# (they use SCCM/Intune/vendor server tooling instead), so we skip on servers.
+# Intel DSA also skipped on servers - Intel DCM is the equivalent there.
+if ($doInstallVendorDrivers -and $IsServer) {
+    Write-Host "`n[Phase 1l] Vendor driver tools: SKIPPED on Windows Server (use SCCM/Intune/vendor server tools instead)." -ForegroundColor Yellow
+}
+elseif ($doInstallVendorDrivers) {
+    Write-Host "`n[Phase 1l] Installing vendor driver management tools..." -ForegroundColor Green
+
+    # ----- Detect hardware -------------------------------------------------
+    $cs    = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $cpu   = Get-CimInstance -ClassName Win32_Processor      -ErrorAction SilentlyContinue | Select-Object -First 1
+    $audio = @(Get-CimInstance -ClassName Win32_SoundDevice  -ErrorAction SilentlyContinue)
+
+    $mfr   = if ($cs) { [string]$cs.Manufacturer } else { '' }
+    $model = if ($cs) { [string]$cs.Model }        else { '' }
+    $cpuMfr = if ($cpu) { [string]$cpu.Manufacturer } else { '' }
+    $cpuName = if ($cpu) { [string]$cpu.Name }        else { '' }
+
+    Write-Host "  Detected: $mfr $model  |  CPU: $cpuName" -ForegroundColor DarkGray
+
+    # ----- Dell hardware ---------------------------------------------------
+    # Manufacturer strings on Dell: 'Dell Inc.' (desktop/laptop), 'Dell Computer Corporation' (legacy).
+    if ($mfr -match 'Dell') {
+        Install-OrUpgrade-Winget `
+            -Name 'Dell Command | Update' `
+            -Id   'Dell.CommandUpdate.Universal' `
+            -Source 'winget' `
+            -FallbackUrl 'https://www.dell.com/support/kbdoc/en-us/000177325/dell-command-update'
+    }
+
+    # ----- HP hardware -----------------------------------------------------
+    # Manufacturer strings on HP: 'HP' (newer), 'Hewlett-Packard' (older).
+    if ($mfr -match 'HP|Hewlett') {
+        Install-OrUpgrade-Winget `
+            -Name 'HP Support Assistant' `
+            -Id   'HP.SupportAssistant' `
+            -Source 'winget' `
+            -FallbackUrl 'https://support.hp.com/us-en/help/hp-support-assistant'
+    }
+
+    # ----- Lenovo hardware -------------------------------------------------
+    # Manufacturer strings on Lenovo: 'LENOVO' (uppercased on most models).
+    # Vantage is distributed via Microsoft Store only - use msstore source.
+    if ($mfr -match 'Lenovo') {
+        Install-OrUpgrade-Winget `
+            -Name 'Lenovo Vantage' `
+            -Id   '9WZDNCRFJ4MV' `
+            -Source 'msstore' `
+            -FallbackUrl 'https://apps.microsoft.com/detail/9wzdncrfj4mv'
+    }
+
+    # ----- Intel silicon (independent of chassis vendor) -------------------
+    # Intel DSA is a driver checker for Intel CPU/GPU/NIC/WiFi/Bluetooth.
+    # Detect via CPU manufacturer - covers 99% of cases. Machines with Intel
+    # NIC only but AMD CPU are rare enough to not warrant Win32_PnPEntity scan.
+    if ($cpuMfr -match 'Intel|GenuineIntel' -or $cpuName -match 'Intel') {
+        Install-OrUpgrade-Winget `
+            -Name 'Intel Driver & Support Assistant' `
+            -Id   'Intel.IntelDriverAndSupportAssistant' `
+            -Source 'winget' `
+            -FallbackUrl 'https://www.intel.com/dsa'
+    }
+
+    # ----- Realtek audio ---------------------------------------------------
+    # Realtek Audio Console is required for the driver's UI on modern
+    # Realtek codecs. Distributed via Microsoft Store only.
+    $hasRealtekAudio = $audio | Where-Object {
+        ($_.Manufacturer -match 'Realtek') -or ($_.Name -match 'Realtek') -or ($_.ProductName -match 'Realtek')
+    }
+    if ($hasRealtekAudio) {
+        Install-OrUpgrade-Winget `
+            -Name 'Realtek Audio Console' `
+            -Id   '9P71VC01SBTL' `
+            -Source 'msstore' `
+            -FallbackUrl 'https://apps.microsoft.com/detail/9p71vc01sbtl'
+    }
+
+    Write-Host "  Vendor driver tools phase complete." -ForegroundColor DarkGray
+}
+else {
+    Write-Host "`n[Phase 1l] Vendor driver tools: SKIPPED (per your choice)." -ForegroundColor DarkGray
 }
 
 #endregion
