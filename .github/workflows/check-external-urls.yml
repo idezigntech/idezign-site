@@ -1,0 +1,29 @@
+name: Check external URLs
+
+# Catches URL rot in scripts + website. Runs weekly (Monday 12:00 UTC =
+# ~5am Pacific), plus on any push that touches script/site content, plus
+# manually via the Actions tab "Run workflow" button.
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/**'
+      - 'toolkit/**'
+      - 'help/**'
+      - '.github/scripts/check-external-urls.ps1'
+      - '.github/workflows/check-external-urls.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan external URLs
+        shell: pwsh
+        run: ./.github/scripts/check-external-urls.ps1
