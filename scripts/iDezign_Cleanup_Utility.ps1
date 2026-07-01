@@ -547,12 +547,14 @@ if (-not $ResumeAfterUpdate) {
     #   HP hw    -> HP Support Assistant        (winget)
     #   Lenovo   -> Lenovo Vantage              (msstore)
     #   Intel    -> Intel Driver & Support Asst (winget)
-    #   Realtek  -> Realtek Audio Console       (msstore)
+    # Realtek Audio Console (was 9P71VC01SBTL) intentionally omitted - the
+    # standalone Microsoft Store listing was pulled in 2026; the vendor tools
+    # above already ship the console as part of their OEM driver package.
     # Each detection is checked at apply time (Phase 1l) via CIM queries; we
     # don't pre-run detection here so the tech can enable this even on a mixed
     # fleet where the exact hardware varies.
     Write-Host ""
-    $answer = Read-Host "Install vendor driver tools (Dell CU / HP SA / Lenovo Vantage / Intel DSA / Realtek)? (Y/N)"
+    $answer = Read-Host "Install vendor driver tools (Dell CU / HP SA / Lenovo Vantage / Intel DSA)? (Y/N)"
     $doInstallVendorDrivers = $answer -match '^(y|yes)$'
 
     # --- Set network profile to Private + enable sharing/discovery ---
@@ -696,7 +698,7 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Install TV Host : " + ($(if($doInstallTV){'YES (iDezign branded)'}else{'NO'})))
     Write-Host ("  Download MWB    : " + ($(if($doDownloadMWB){'YES (to ~\Downloads)'}else{'NO'})))
     Write-Host ("  Install OpenShl : " + $openShellSummary)
-    Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel/Realtek per-hw)'}else{'NO'})))
+    Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel per-hw)'}else{'NO'})))
     Write-Host ("  Power settings  : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr / no sleep/hibernate)'}else{'NO'})))
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
     Write-Host ("  Defender scan   : " + $scanSummary)
@@ -2328,22 +2330,17 @@ elseif ($doInstallVendorDrivers) {
             -Name 'Intel Driver & Support Assistant' `
             -Id   'Intel.IntelDriverAndSupportAssistant' `
             -Source 'winget' `
-            -FallbackUrl 'https://www.intel.com/dsa'
+            -FallbackUrl 'https://www.intel.com/content/www/us/en/support/detect.html'
     }
 
-    # ----- Realtek audio ---------------------------------------------------
-    # Realtek Audio Console is required for the driver's UI on modern
-    # Realtek codecs. Distributed via Microsoft Store only.
-    $hasRealtekAudio = $audio | Where-Object {
-        ($_.Manufacturer -match 'Realtek') -or ($_.Name -match 'Realtek') -or ($_.ProductName -match 'Realtek')
-    }
-    if ($hasRealtekAudio) {
-        Install-OrUpgrade-Winget `
-            -Name 'Realtek Audio Console' `
-            -Id   '9P71VC01SBTL' `
-            -Source 'msstore' `
-            -FallbackUrl 'https://apps.microsoft.com/detail/9p71vc01sbtl'
-    }
+    # ----- Realtek audio (skipped intentionally) ---------------------------
+    # Realtek Audio Console was previously available as a standalone Microsoft
+    # Store app (9P71VC01SBTL) but Microsoft removed the listing in 2026 - the
+    # URL now returns ProductNotFound. Realtek Audio Console still exists but
+    # is now distributed BUNDLED with the OEM driver package, which the vendor
+    # tools we just installed (Dell CU / HP SA / Lenovo Vantage) already fetch
+    # and apply as part of their own driver-update flow. So the console is
+    # already covered by the vendor path - no separate action needed here.
 
     Write-Host "  Vendor driver tools phase complete." -ForegroundColor DarkGray
 }

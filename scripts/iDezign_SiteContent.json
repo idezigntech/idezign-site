@@ -68,7 +68,7 @@
     },
     {
       "name": "Intel Driver & Support Assistant",
-      "url": "https://www.intel.com/dsa",
+      "url": "https://www.intel.com/content/www/us/en/support/detect.html",
       "category": "drivers",
       "badgeText": "Drivers",
       "description": "Intel's driver checker for Intel CPU/GPU/NIC/WiFi/Bluetooth. Diagnostics points you here when it detects Intel silicon without DSA installed - grab it to keep chipset drivers current.",
@@ -89,14 +89,6 @@
       "badgeText": "Drivers",
       "description": "Lenovo's system control panel - drivers, warranty, battery health, hardware tuning. Cleanup auto-installs it from the Microsoft Store on Lenovo machines.",
       "meta": "Lenovo - Free (Microsoft Store)"
-    },
-    {
-      "name": "Realtek Audio Console",
-      "url": "https://apps.microsoft.com/detail/9p71vc01sbtl",
-      "category": "drivers",
-      "badgeText": "Drivers",
-      "description": "The current audio control panel for Realtek codecs (successor to Realtek HD Audio Manager). Cleanup auto-installs it when Realtek audio hardware is detected.",
-      "meta": "Realtek - Free (Microsoft Store)"
     }
   ]
 }
