@@ -13,7 +13,11 @@ v3.2 - 2026-07-01 - Cleanup: hardware-aware vendor driver tools install (Phase 1
       HP / Hewlett mfr   -> HP Support Assistant             (winget)
       Lenovo mfr         -> Lenovo Vantage                   (msstore)
       Intel CPU / silicon-> Intel Driver & Support Assistant (winget)
-      Realtek in audio   -> Realtek Audio Console            (msstore)
+    (Realtek Audio Console was planned but dropped: the standalone
+    Microsoft Store listing 9P71VC01SBTL was pulled in 2026 - the URL
+    now returns ProductNotFound. The console still ships bundled with
+    OEM driver packages, which Dell CU / HP SA / Lenovo Vantage already
+    apply as part of their own driver-update flow. So it's covered.)
     Skipped entirely on Windows Server - server SKUs use SCCM/Intune/vendor
     server tooling (Intel DCM, HP Smart Update Manager, etc.), not the
     consumer tools shipped here.
@@ -37,7 +41,20 @@ v3.2 - 2026-07-01 - Cleanup: hardware-aware vendor driver tools install (Phase 1
     one. On failure, opens a dedup'ed GitHub Issue tagged 'url-rot' with
     a table of dead URLs + which files reference them. Runs Mondays at
     12:00 UTC + on any push to script/site content + manual dispatch.
-    Notification path: GitHub emails on the new issue.
+    Notification path: GitHub emails on the new issue. First real run
+    caught 3 issues immediately: (1) fonts.googleapis.com + fonts.
+    gstatic.com were false-positives (preconnect hints, don't serve a
+    landing page) - added to the skip list, (2) the Realtek Store URL
+    was dead (see above), (3) /releases/latest/download/iDezign-Toolkit.exe
+    returned 404 because assets were never attached to releases (see
+    build workflow fix below).
+  * BUILD: .github/workflows/build-toolkit-zip.yml now attaches the
+    dist/.zip and dist/.exe to the matching GitHub Release via
+    'gh release upload --clobber' after building. Also triggers on
+    'release: published' so cutting a new release auto-attaches. This
+    keeps the SmartScreen-bypass fallback link on idezign.ai/toolkit
+    (Get from GitHub Releases) alive - previously it 404'd since v2.9.1
+    because releases were cut but assets were never uploaded.
 
 v3.1.1 - 2026-07-01 - TeamViewer HOST URL updated to custom.teamviewer.com/idhelp
   * iDezign_Cleanup_Utility.ps1 + iDezign_Diagnostics.ps1: the branded
