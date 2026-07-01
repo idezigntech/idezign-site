@@ -4,6 +4,41 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.2 - 2026-07-01 - Cleanup: hardware-aware vendor driver tools install (Phase 1l)
+  * NEW Cleanup Phase 1l - Install vendor driver management tools.
+    Detects hardware at run time via CIM and installs the matching vendor
+    driver management app so the customer has one-click driver/firmware
+    updates after we leave. Detection matrix:
+      Dell mfr           -> Dell Command | Update            (winget)
+      HP / Hewlett mfr   -> HP Support Assistant             (winget)
+      Lenovo mfr         -> Lenovo Vantage                   (msstore)
+      Intel CPU / silicon-> Intel Driver & Support Assistant (winget)
+      Realtek in audio   -> Realtek Audio Console            (msstore)
+    Skipped entirely on Windows Server - server SKUs use SCCM/Intune/vendor
+    server tooling (Intel DCM, HP Smart Update Manager, etc.), not the
+    consumer tools shipped here.
+  * NEW helpers - Ensure-Winget (bootstrap App Installer if missing;
+    downloads the .msixbundle from aka.ms/getwinget and installs via
+    Add-AppxPackage) + Install-OrUpgrade-Winget (idempotent installer that
+    runs 'winget install' if missing OR 'winget upgrade' if already
+    installed, always logs the outcome, and silently opens the vendor
+    download page in the browser if winget is genuinely unavailable - no
+    Y/N prompt mid-run).
+  * SITE: /toolkit/ page - split the "Also worth installing" grid into a
+    manifest file (scripts/iDezign_SiteContent.json). The JS renderer in
+    toolkit/index.html fetches that JSON from jsDelivr and re-populates
+    the grid at page load. Adding a new tile is now a JSON edit, not an
+    HTML edit. Backfilled 5 new tiles: Windows Update (ms-settings:
+    windowsupdate - opens Settings > Windows Update directly on the
+    user's PC), Dell CU, Intel DSA, HP Support Assistant, Lenovo Vantage,
+    Realtek Audio Console. 12 tiles total (4 rows x 3 columns).
+  * CI: new weekly workflow .github/workflows/check-external-urls.yml
+    that scans scripts/, toolkit/, help/ for http(s) URLs and HEADs each
+    one. On failure, opens a dedup'ed GitHub Issue tagged 'url-rot' with
+    a table of dead URLs + which files reference them. Runs Mondays at
+    12:00 UTC + on any push to script/site content + manual dispatch.
+    Notification path: GitHub emails on the new issue.
+
 v3.1.1 - 2026-07-01 - TeamViewer HOST URL updated to custom.teamviewer.com/idhelp
   * iDezign_Cleanup_Utility.ps1 + iDezign_Diagnostics.ps1: the branded
     TeamViewer Host download URL was 'get.teamviewer.com/idezign' - that
