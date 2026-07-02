@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.06.30-v3.1-time-drift'
+$script:ModuleVersion = '2026.07.01-v3.2.1-fullpath-resolve'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -538,8 +538,29 @@ function Start-ProcessWithTimeout {
     )
     $started = $null
     try {
+        # If $FilePath is a bare name (no directory component), resolve to
+        # full path via Get-Command first. Process.Start with
+        # UseShellExecute=$false calls CreateProcess, whose PATH-search
+        # semantics are unreliable across bitness / current-directory /
+        # launched-vs-console contexts. We've been bitten by "The system
+        # cannot find the file specified" when calling vssadmin/dism/msiexec
+        # by bare name from Cleanup. Resolving to full path up-front is
+        # deterministic on every Windows SKU.
+        $resolvedPath = $FilePath
+        if ($FilePath -and ($FilePath -notmatch '[\\/]') -and (-not [System.IO.Path]::IsPathRooted($FilePath))) {
+            try {
+                $cmd = Get-Command $FilePath -CommandType Application -ErrorAction Stop | Select-Object -First 1
+                if ($cmd -and $cmd.Source) { $resolvedPath = $cmd.Source }
+            } catch {
+                # Fall back to System32 for classic Windows tools before
+                # giving up - covers the odd case where PATH has been wiped.
+                $sysExe = Join-Path $env:SystemRoot "System32\$FilePath"
+                if (Test-Path -LiteralPath $sysExe) { $resolvedPath = $sysExe }
+            }
+        }
+
         $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName  = $FilePath
+        $psi.FileName  = $resolvedPath
         if ($ArgumentList) { $psi.Arguments = ($ArgumentList -join ' ') }
         $psi.UseShellExecute  = $false
         $psi.CreateNoWindow   = $NoNewWindow
