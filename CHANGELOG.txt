@@ -4,6 +4,26 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.2.2 - 2026-07-01 - Three Cleanup fixes from live field run (rename, resume, WU loop)
+  * Phase 4 rename: 'Rename-LocalUser' fails on Win 11 25H2 same way
+    Get-LocalUser did for REPAIR. Added ADSI (WinNT provider) fallback -
+    (`[ADSI]"WinNT://.../CurrentUser,user"`.psbase.Rename()). ADSI works on
+    every Windows version regardless of LocalAccounts module state.
+  * Resume-after-Windows-Update-reboot: switched from HKLM RunOnce (fires
+    in user's context, needs UAC, dies when user has a login password) to
+    a ScheduledTask with AtLogOn trigger running as SYSTEM elevated with
+    highest privileges. RunOnce is kept as belt-and-suspenders fallback in
+    case the task subsystem is corrupted or GPO-blocked. Fixes "if there
+    is a password for the user to put in I have to start the entire
+    Cleanup script over" reported from live field run.
+  * Phase 0 WU loop: after a successful install pass with no reboot
+    required, force a fresh UsoClient StartScan + 20s wait before the
+    next Get-WindowsUpdate call. Without this, PSWindowsUpdate's cached
+    scan state makes the next pass return empty even when Defender/driver/
+    prereq-gated updates are pending, causing the loop to declare "done"
+    prematurely. Fixes "Windows update doesn't loop anymore" reported
+    from live field run.
+
 v3.2.1 - 2026-07-01 - Fix "system cannot find the file specified" for vssadmin/dism/msiexec
   * iDezign_Common.psm1 - Start-ProcessWithTimeout now resolves bare
     executable names via Get-Command -CommandType Application before
