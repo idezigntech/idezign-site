@@ -218,11 +218,11 @@ footer .top{flex-direction:column}
 <li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span> &nbsp;<span>— sysprep for imaging</span></span></li>
 </ul>
 <div class="foot">
-<a href="/dist/iDezign-Toolkit.exe" class="btn-primary" download>Download .exe &nbsp;↓</a>
-<span class="meta">Windows · One-click · ~265&nbsp;KB</span>
+<a id="dlExe" href="https://github.com/idezigntech/idezign-site/releases/download/v3.2.2/iDezign-Toolkit.exe" class="btn-primary">Download .exe &nbsp;↓</a>
+<span class="meta">Windows · One-click · ~270&nbsp;KB</span>
 </div>
 <p style="margin-top:14px;font-size:13px;color:var(--muted);font-weight:300;line-height:1.5">
-Or <a href="/dist/iDezign-Toolkit.zip" download style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — for AppLocker-restricted machines). Windows blocking the .exe? <a href="https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.exe" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">Get from GitHub Releases →</a>
+Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/download/v3.2.2/iDezign-Toolkit.zip" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — best if Windows Defender flags the .exe as PUA on first download). Both are the same content; the .zip is friendlier to reputation-strict antivirus.
 </p>
 </div>
 
@@ -426,6 +426,18 @@ fetch(BASE + "iDezign_Versions.json?t=" + t, {cache:"no-store"})
 .then(function(r){return r.ok?r.json():null})
 .then(function(mf){
 if(!mf)return;
+// Rewrite download links to the versioned GitHub Release URL for the
+// current toolkitVersion. Versioned URLs are IMMUTABLE (same hash forever),
+// so every download builds SmartScreen reputation for that specific hash.
+// The HTML fallback URLs already point at v3.2.2 - this just keeps them
+// current on future releases without manual site edits.
+if(mf.toolkitVersion){
+  var relBase = "https://github.com/idezigntech/idezign-site/releases/download/v"+mf.toolkitVersion+"/";
+  var dlExe = document.getElementById("dlExe");
+  var dlZip = document.getElementById("dlZip");
+  if(dlExe) dlExe.href = relBase + "iDezign-Toolkit.exe";
+  if(dlZip) dlZip.href = relBase + "iDezign-Toolkit.zip";
+}
 var ul=document.querySelector(".tool .feats");
 if(ul && mf.tools && mf.tools.length){
 var s=mf.tools.slice().sort(function(a,b){return (a.order||0)-(b.order||0);});
