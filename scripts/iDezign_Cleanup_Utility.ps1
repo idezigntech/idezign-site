@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.01-v3.2-vendor-drivers-r2'
+$ScriptVersion = '2026.07.01-v3.2.2-rename-adsi-scheduledtask-wuscan'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -939,20 +939,79 @@ if ($needModule) {
 
 Import-Module PSWindowsUpdate -ErrorAction SilentlyContinue -Verbose:$false
 
-$RunOnceKey  = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
-$RunOnceName = 'iDezign_Cleanup_Resume'
+$RunOnceKey    = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce'
+$RunOnceName   = 'iDezign_Cleanup_Resume'
+$ResumeTaskName = 'iDezign_Cleanup_Resume'
+
+# ----------------------------------------------------------------------------
+# Resume mechanism: ScheduledTask (primary) + RunOnce (belt-and-suspenders).
+#
+# Old behavior used only HKLM\RunOnce, which fires in the LOGGING-ON USER's
+# context. Failure modes we hit in the field:
+#   * User has a login password -> RunOnce may fire before the user finishes
+#     typing, then powershell.exe launches non-elevated and the script exits
+#     immediately for lack of admin - leaving Eric to restart from scratch.
+#   * User account isn't a local admin -> RunOnce prompts for UAC, user
+#     declines, resume dies silently.
+#   * AV/EDR blocks powershell.exe launched from RunOnce.
+#
+# New behavior registers a ScheduledTask with AtLogOn trigger, running as
+# SYSTEM with the highest privileges. The task waits for ANY user to
+# interactively log on, then re-launches the script -ResumeAfterUpdate
+# elevated. RunOnce is kept as a fallback in case ScheduledTasks is
+# corrupted or ExecutionPolicy blocks the task action.
+# ----------------------------------------------------------------------------
 
 function Set-ResumeRunOnce {
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ResumeAfterUpdate"
-    New-ItemProperty -Path $RunOnceKey -Name $RunOnceName -Value $cmd -PropertyType String -Force | Out-Null
-    Write-Host "  RunOnce registered - script will resume after next login." -ForegroundColor DarkGray
+    # 1) Primary: ScheduledTask with AtLogOn trigger, elevated as SYSTEM
+    $taskOk = $false
+    try {
+        # Clean up any stale registration first
+        Unregister-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$ScriptPath`" -ResumeAfterUpdate"
+        $trigger   = New-ScheduledTaskTrigger -AtLogOn
+        # Small delay lets the shell finish initializing so console appears cleanly
+        $trigger.Delay = 'PT10S'
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        $settings  = New-ScheduledTaskSettingsSet `
+                        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                        -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+
+        Register-ScheduledTask -TaskName $ResumeTaskName `
+                               -Action $action -Trigger $trigger `
+                               -Principal $principal -Settings $settings `
+                               -Description 'Resume iDezign Cleanup after Windows Update reboot' `
+                               -Force -ErrorAction Stop | Out-Null
+        Write-Host "  ScheduledTask registered - script auto-resumes as SYSTEM at next login." -ForegroundColor DarkGray
+        $taskOk = $true
+    } catch {
+        Write-Host "  ScheduledTask registration failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  Falling back to RunOnce (may require UAC prompt)." -ForegroundColor Yellow
+    }
+
+    # 2) Belt-and-suspenders: also register RunOnce so if the ScheduledTask
+    # trigger doesn't fire (task subsystem broken / policy), the classic path
+    # still gives us a shot at resume.
+    try {
+        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ResumeAfterUpdate"
+        New-ItemProperty -Path $RunOnceKey -Name $RunOnceName -Value $cmd -PropertyType String -Force | Out-Null
+        if (-not $taskOk) {
+            Write-Host "  RunOnce registered - script will resume after next login." -ForegroundColor DarkGray
+        }
+    } catch { }
 }
 
 function Clear-ResumeRunOnce {
+    # Clean up both registration paths
+    try {
+        Unregister-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    } catch { }
     if (Get-ItemProperty -Path $RunOnceKey -Name $RunOnceName -ErrorAction SilentlyContinue) {
         Remove-ItemProperty -Path $RunOnceKey -Name $RunOnceName -ErrorAction SilentlyContinue
-        Write-Host "  RunOnce cleared." -ForegroundColor DarkGray
     }
+    Write-Host "  Resume triggers cleared." -ForegroundColor DarkGray
 }
 
 if (-not $skipUpdates) {
@@ -1122,7 +1181,22 @@ if (-not $skipUpdates) {
             }
             exit 0
         } else {
-            Write-Host "  No reboot needed - looping to check for more updates." -ForegroundColor DarkGray
+            # No reboot needed - but before looping back, force a fresh WU scan.
+            # Get-WindowsUpdate uses cached scan results; without a rescan, the
+            # next pass often returns "no updates" even when more are pending
+            # (typical for Defender definition updates, drivers, or updates
+            # gated by the CU we just installed). This was the root cause of
+            # "Windows update doesn't loop anymore" from the v3.2.x field run.
+            Write-Host "  No reboot needed - forcing fresh WU scan before next pass..." -ForegroundColor DarkGray
+            try {
+                $uso = Join-Path $env:SystemRoot 'System32\UsoClient.exe'
+                if (Test-Path $uso) {
+                    Start-Process -FilePath $uso -ArgumentList 'StartScan' `
+                                  -WindowStyle Hidden -ErrorAction SilentlyContinue | Out-Null
+                }
+                # PSWindowsUpdate caches; force it to re-query the WU agent
+                Start-Sleep -Seconds 20
+            } catch { }
         }
 
     } while ($pass -lt $maxPasses)
@@ -3050,13 +3124,44 @@ if ($doRenameUser) {
     elseif ($CurrentUser -eq 'REPAIR') {
         Write-Host "  Refusing to rename - current user IS the REPAIR account. Skipping." -ForegroundColor Yellow
     } else {
-        try {
-            Rename-LocalUser -Name $CurrentUser -NewName $newUserName -ErrorAction Stop
-            Set-LocalUser   -Name $newUserName  -FullName $newUserName -ErrorAction SilentlyContinue
+        # Try Rename-LocalUser first (LocalAccounts module), then fall back to
+        # the ADSI WinNT provider - which works even when the LocalAccounts
+        # cmdlets fail to auto-load on Win 11 25H2 (same failure pattern that
+        # bit the REPAIR account in Phase 3).
+        $renamed = $false
+        $lastErr = $null
+
+        # Attempt 1: LocalAccounts cmdlet path
+        if (Get-Command Rename-LocalUser -ErrorAction SilentlyContinue) {
+            try {
+                Rename-LocalUser -Name $CurrentUser -NewName $newUserName -ErrorAction Stop
+                Set-LocalUser   -Name $newUserName  -FullName $newUserName -ErrorAction SilentlyContinue
+                $renamed = $true
+            } catch { $lastErr = $_.Exception.Message }
+        }
+
+        # Attempt 2: ADSI (WinNT provider) - the classic, always-present path
+        if (-not $renamed) {
+            try {
+                $adsiUser = [ADSI]"WinNT://$env:COMPUTERNAME/$CurrentUser,user"
+                # .psbase.Rename() renames the SAM account name
+                $null = $adsiUser.psbase.Rename($newUserName)
+                # Re-bind under the new name and set FullName to match
+                $renamedUser = [ADSI]"WinNT://$env:COMPUTERNAME/$newUserName,user"
+                try {
+                    $renamedUser.FullName = $newUserName
+                    $renamedUser.SetInfo()
+                } catch { }
+                Write-Host "  (ADSI fallback used - LocalAccounts cmdlets unavailable on this build.)" -ForegroundColor DarkGray
+                $renamed = $true
+            } catch { $lastErr = $_.Exception.Message }
+        }
+
+        if ($renamed) {
             Write-Host "  account renamed." -ForegroundColor DarkGray
             Write-Host "  NOTE: profile folder is still C:\Users\$CurrentUser (Windows doesn't rename it)." -ForegroundColor DarkYellow
-        } catch {
-            Write-Host "  ERROR renaming account: $($_.Exception.Message)" -ForegroundColor Red
+        } else {
+            Write-Host "  ERROR renaming account: $lastErr" -ForegroundColor Red
             Write-Host "  If this is a Microsoft Account-backed login, rename via Settings -> Accounts." -ForegroundColor Yellow
         }
     }
