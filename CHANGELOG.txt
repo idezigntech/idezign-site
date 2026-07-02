@@ -4,6 +4,19 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.2.1 - 2026-07-01 - Fix "system cannot find the file specified" for vssadmin/dism/msiexec
+  * iDezign_Common.psm1 - Start-ProcessWithTimeout now resolves bare
+    executable names via Get-Command -CommandType Application before
+    invoking, with a SystemRoot\System32 fallback. Root cause: Process.
+    Start(psi) with UseShellExecute=$false calls CreateProcess, whose
+    PATH-search semantics are unreliable across process bitness / current
+    -directory context. Symptom: Cleanup Phase 2 step 7/8 (vssadmin delete
+    shadows) threw "Exception calling 'Start' with '1' argument(s): The
+    system cannot find the file specified" on Eric's live run. Same latent
+    bug affected msiexec (Phase 1d Malwarebytes install) and three dism
+    calls (Phase 2 step 8/8 component cleanup + resetbase). All fixed via
+    the central helper - no changes needed at the call sites.
+
 v3.2 - 2026-07-01 - Cleanup: hardware-aware vendor driver tools install (Phase 1l)
   * NEW Cleanup Phase 1l - Install vendor driver management tools.
     Detects hardware at run time via CIM and installs the matching vendor
