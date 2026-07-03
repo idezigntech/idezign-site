@@ -258,3 +258,26 @@ jobs:
             echo "No release with tag $TAG yet - skipping asset upload."
             echo "  (Assets will be attached when release is cut, or when this workflow re-runs after the release exists.)"
           fi
+
+      # ----------------------------------------------------------------
+      # v3.4 addition: purge jsDelivr's cache for the two JSON files the
+      # idezign.ai/toolkit page fetches at runtime. jsDelivr caches
+      # @main branch files for up to 12 HOURS, so without this purge the
+      # site kept showing a stale toolkitVersion (old badge, old tool
+      # list, download links pointing at the previous release) for up to
+      # half a day after every release. The ?t= cache-buster in the page
+      # only bypasses the BROWSER cache, not jsDelivr's edge servers.
+      #
+      # Fail-soft: a purge hiccup should never fail the build - worst
+      # case the cache just expires on its own within 12h as before.
+      # ----------------------------------------------------------------
+      - name: Purge jsDelivr cache (site reads manifest through it)
+        if: always()
+        run: |
+          for f in iDezign_Versions.json iDezign_SiteContent.json; do
+            echo "Purging: $f"
+            curl -fsS --max-time 30 --retry 2 \
+              "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/scripts/$f" \
+              && echo "" || echo "WARN: purge failed for $f (cache will expire on its own within 12h)"
+          done
+          echo "jsDelivr purge done - idezign.ai/toolkit will pick up the new manifest on next load."
