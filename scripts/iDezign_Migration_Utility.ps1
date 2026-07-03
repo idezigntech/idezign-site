@@ -53,7 +53,7 @@ param(
     [string]$RestoreAction = 'Prompt'
 )
 
-$ScriptVersion = '2026.06.24-migrate-v2.1-heartbeat'
+$ScriptVersion = '2026.07.03-v3.4.1-migrate-space-safe'
 $ErrorActionPreference = 'Continue'
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -135,16 +135,24 @@ function Invoke-Robocopy {
         return
     }
     $null = New-Item -ItemType Directory -Path $Dest -Force
-    $rcArgs = @($Source, $Dest, '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:2', '/W:2', '/XJ', '/MT:16', '/NP', '/NFL', '/NDL') + $ExtraArgs
 
     Write-Host ("  copying {0} -> {1}" -f $Source, $Dest) -ForegroundColor DarkGray
     Write-Host "  (running in background - heartbeat every 10s so you know it's alive)" -ForegroundColor DarkGray
 
+    # v3.3.1 fix: pass Source/Dest/ExtraArgs as NAMED parameters (no
+    # collision with PowerShell's $args automatic variable) and build
+    # the robocopy args INSIDE the job. Old code used param($args) +
+    # splat @(,$rcArgs), which broke argument quoting for paths with
+    # spaces (e.g. "D:\Paul A BU\Backup_..."). Robocopy saw three
+    # separate args instead of one quoted path, returned exit 16, and
+    # nothing copied.
     $job = Start-Job -ScriptBlock {
-        param($args)
-        robocopy @args | Out-Null
+        param([string]$SrcArg, [string]$DstArg, [string[]]$ExtraArgsList)
+        $rcA = @($SrcArg, $DstArg, '/E', '/COPY:DAT', '/DCOPY:DAT', '/R:2', '/W:2', '/XJ', '/MT:16', '/NP', '/NFL', '/NDL')
+        if ($ExtraArgsList) { $rcA += $ExtraArgsList }
+        & robocopy.exe @rcA | Out-Null
         return $LASTEXITCODE
-    } -ArgumentList @(,$rcArgs)
+    } -ArgumentList $Source, $Dest, $ExtraArgs
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $nextBeat = 10
