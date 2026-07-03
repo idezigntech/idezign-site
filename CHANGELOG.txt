@@ -4,6 +4,29 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.3 - 2026-07-01 - New Duplicate tool + Cleanup Preflight moves Chrome/MWB early
+  * NEW tool: iDezign_Duplicate.ps1 - one-way copy between any two
+    locations. Handles folder<->folder, drive<->drive, USB, CD/DVD,
+    network shares uniformly (all just paths under the hood). Robocopy-
+    based with three modes:
+      M - Mirror   : dest becomes exact copy of source (deletes extras)
+      A - Additive : copy source -> dest, no deletions on dest
+      D - Dry-run  : preview without touching files
+    Retry-limited (R:1 W:1) to avoid the default robocopy 30-minute
+    per-file hang on locked files. Multithreaded (/MT:16), exclude
+    junctions (/XJ) to prevent infinite loops on system drives.
+    Interactive prompts for source, destination, mode - drag-drop from
+    Explorer into the console auto-fills paths. Log file written next
+    to destination for audit. Registered in the manifest as tool #7
+    (icon 📋), reordering Reset-to-OOBE to slot 8.
+  * Cleanup: Preflight quick-installs before the WU loop. Chrome install,
+    Chrome default browser, and Malwarebytes download all moved to a new
+    [Preflight] region that runs AFTER prompts but BEFORE the multi-hour
+    Windows Update loop. Fail-fast: if a download URL is broken you know
+    in 60 seconds instead of 3 hours in. Chrome default is set early so
+    browsing during the update loop uses Chrome. State-gated (Preflight
+    Done flag) so Phase 1a/1b/1d skip on resume after WU reboot.
+
 v3.2.2 - 2026-07-01 - Three Cleanup fixes from live field run (rename, resume, WU loop)
   * Phase 4 rename: 'Rename-LocalUser' fails on Win 11 25H2 same way
     Get-LocalUser did for REPAIR. Added ADSI (WinNT provider) fallback -
