@@ -4,6 +4,27 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.4.2 - 2026-07-03 - Cleanup: WU scan recovery + shadow deletion via WMI (both from live field run)
+  * Cleanup Phase 0: Get-WindowsUpdate "Value does not fall within the
+    expected range" (known PSWindowsUpdate first-run WU-agent issue,
+    GitHub #14) was being swallowed - the catch set $updates=@() and the
+    script printed a green "Update phase complete" WITHOUT having scanned.
+    False success: machine left unpatched, tech none the wiser. Now:
+    register the Microsoft Update service (7971f918... - required for
+    -MicrosoftUpdate), restart wuauserv+bits, retry with -MicrosoftUpdate,
+    then retry as plain WU. Only if all three fail does the phase end,
+    and it ends with a YELLOW "updates were NOT checked, run manually"
+    warning instead of a green all-clear.
+  * Cleanup Phase 2-7/8: "ERROR running vssadmin delete shadows: The
+    system cannot find the file specified" persisted even after the
+    v3.2.1 full-path-resolution fix - and DISM launches fine through the
+    same helper on the same machine, so vssadmin.exe itself is missing/
+    unreachable (newer Win 11 builds strip legacy VSS tooling; AV also
+    targets this exact command). Shadow deletion now uses the
+    Win32_ShadowCopy WMI class first (the API vssadmin wraps, no
+    external exe needed, reports the count deleted), with vssadmin kept
+    only as fallback if WMI errors.
+
 v3.4.1 - 2026-07-03 - Migrate: fix exit-16 robocopy failures with paths containing spaces
   * iDezign_Migration_Utility.ps1 - Invoke-Robocopy was failing with
     "exit 16" in ~2 seconds on every folder when the destination path
