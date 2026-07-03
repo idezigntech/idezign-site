@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.01-v3.3-preflight-installs'
+$ScriptVersion = '2026.07.03-v3.4.2-wu-recover-vss-wmi'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -1139,13 +1139,51 @@ if (-not $skipUpdates) {
         $pass++
         Write-Host "`n  Update pass #$pass - scanning for available updates..." -ForegroundColor Cyan
 
+        $scanFailed = $false
         try {
             $updates = Get-WindowsUpdate -MicrosoftUpdate -ErrorAction Stop
         } catch {
             Write-Host "  Get-WindowsUpdate failed: $($_.Exception.Message)" -ForegroundColor Red
-            $updates = @()
+            # v3.4.2: "Value does not fall within the expected range" is a known
+            # first-run WU-agent state issue (PSWindowsUpdate GitHub #14). It is
+            # NOT "no updates" - the old code swallowed it and printed a green
+            # "Update phase complete", silently skipping updates on the machine.
+            # Recovery: register the Microsoft Update service (needed for
+            # -MicrosoftUpdate to work at all), bounce the WU services, retry
+            # once with -MicrosoftUpdate, then once as plain WU before we admit
+            # defeat - and if we DO give up, say so in yellow, not green.
+            Write-Host "  Attempting WU agent recovery (register MU service + restart services)..." -ForegroundColor DarkYellow
+            try {
+                Add-WUServiceManager -ServiceID '7971f918-a847-4430-9279-4a52d1efe18d' `
+                    -AddServiceFlag 7 -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+            } catch { }
+            foreach ($svcName in @('wuauserv','bits')) {
+                try { Restart-Service -Name $svcName -Force -ErrorAction SilentlyContinue } catch { }
+            }
+            Start-Sleep -Seconds 5
+            try {
+                $updates = Get-WindowsUpdate -MicrosoftUpdate -ErrorAction Stop
+                Write-Host "  Retry with -MicrosoftUpdate succeeded." -ForegroundColor Green
+            } catch {
+                Write-Host "  Retry failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+                try {
+                    $updates = Get-WindowsUpdate -ErrorAction Stop
+                    Write-Host "  Fallback scan (Windows Update only, no Microsoft Update) succeeded." -ForegroundColor Green
+                } catch {
+                    Write-Host "  Fallback scan failed too: $($_.Exception.Message)" -ForegroundColor Red
+                    $scanFailed = $true
+                    $updates = @()
+                }
+            }
         }
 
+        if ($scanFailed) {
+            Write-Host ""
+            Write-Host "  WARNING: update scan FAILED - Windows updates were NOT checked." -ForegroundColor Yellow
+            Write-Host "  Cleanup will continue, but run Windows Update manually from" -ForegroundColor Yellow
+            Write-Host "  Settings > Windows Update after this script finishes." -ForegroundColor Yellow
+            break
+        }
         if (-not $updates -or $updates.Count -eq 0) {
             Write-Host "  No pending updates. Update phase complete." -ForegroundColor Green
             break
@@ -2707,18 +2745,45 @@ if ($IsServer) {
     Write-Host "  (Veeam, Windows Server Backup, file-server previous-versions" -ForegroundColor DarkGray
     Write-Host "   all use VSS. Deleting could corrupt in-flight backup jobs.)" -ForegroundColor DarkGray
 } else {
-    # vssadmin can hang if the VSS service is wedged or storage is busy. Hard
-    # 5-min cap, then move on. Shadow deletion is best-effort cleanup, not
-    # critical to imaging.
-    if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
-        $vssRc = Start-ProcessWithTimeout -FilePath 'vssadmin.exe' `
-                    -ArgumentList @('delete','shadows','/all','/quiet') `
-                    -TimeoutMinutes 5 -Label 'vssadmin delete shadows'
-        if ($vssRc -eq -1) {
-            Write-Host "  vssadmin TIMED OUT (>5 min) - skipped. Shadow copies may remain." -ForegroundColor DarkYellow
+    # v3.4.2: vssadmin kept failing in the field ("The system cannot find the
+    # file specified") even AFTER the v3.2.1 full-path resolution fix - and on
+    # the same machines DISM launches fine through the same helper, so the
+    # resolution works; vssadmin.exe itself is missing/unreachable. Newer Win 11
+    # builds have been stripping legacy VSS tooling, and "vssadmin delete
+    # shadows" is also the single most ransomware-flagged command there is, so
+    # some AV setups neuter it. Primary path is now the Win32_ShadowCopy WMI
+    # class - the API vssadmin wraps - which needs no external exe. vssadmin
+    # stays as fallback for exotic cases where WMI is broken but the exe works.
+    $shadowsDone = $false
+    try {
+        $shadows = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction Stop)
+        if ($shadows.Count -eq 0) {
+            Write-Host "  No shadow copies / restore points found." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Deleting $($shadows.Count) shadow copy(ies) via WMI..." -ForegroundColor DarkGray
+            $shadows | Remove-CimInstance -ErrorAction Stop
+            Write-Host "  Deleted $($shadows.Count) shadow copy(ies)." -ForegroundColor Green
         }
-    } else {
-        cmd /c "vssadmin delete shadows /all /quiet" | Out-Null
+        $shadowsDone = $true
+    } catch {
+        Write-Host "  WMI shadow deletion failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        Write-Host "  Falling back to vssadmin..." -ForegroundColor DarkGray
+    }
+
+    if (-not $shadowsDone) {
+        # vssadmin can hang if the VSS service is wedged or storage is busy.
+        # Hard 5-min cap, then move on. Shadow deletion is best-effort cleanup,
+        # not critical to imaging.
+        if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+            $vssRc = Start-ProcessWithTimeout -FilePath 'vssadmin.exe' `
+                        -ArgumentList @('delete','shadows','/all','/quiet') `
+                        -TimeoutMinutes 5 -Label 'vssadmin delete shadows'
+            if ($vssRc -eq -1) {
+                Write-Host "  vssadmin TIMED OUT (>5 min) - skipped. Shadow copies may remain." -ForegroundColor DarkYellow
+            }
+        } else {
+            cmd /c "vssadmin delete shadows /all /quiet" | Out-Null
+        }
     }
 }
 
