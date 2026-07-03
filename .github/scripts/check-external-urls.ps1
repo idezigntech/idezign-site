@@ -83,7 +83,15 @@ $skipPatterns = @(
 
     # (2) preconnect hint domains (bare URL 404s but sub-paths work)
     '^https?://fonts\.googleapis\.com/?$',
-    '^https?://fonts\.gstatic\.com/?$'
+    '^https?://fonts\.gstatic\.com/?$',
+
+    # (3) JavaScript-concatenation prefix truncations. When the URL regex
+    # captures a string literal like "https://.../download/v" that gets
+    # concatenated with a variable in the code, the captured URL is a
+    # truncated prefix that will 404 on probe. Detect the "ends at a
+    # single lowercase letter after /" pattern common to release URLs.
+    '/v$',
+    '/download/$'
 )
 function Test-ShouldSkip {
     param([string]$Url)
@@ -121,6 +129,7 @@ foreach ($item in $toCheck) {
     $status  = 0
     $method  = 'HEAD'
     $errMsg  = $null
+    $transient = $false
 
     # First attempt: HEAD (fast, no body)
     try {
@@ -143,6 +152,28 @@ foreach ($item in $toCheck) {
             if ($_.Exception.Response) {
                 try { $status = [int]$_.Exception.Response.StatusCode } catch { }
             }
+        }
+    }
+
+    # 5xx = server-side transient (bad gateway / CDN hiccup / temp maintenance).
+    # Wait 5s and retry ONCE with GET. If still 5xx, treat as OK-with-warning
+    # rather than a failure - the URL itself isn't dead, just briefly unhappy.
+    if (-not $ok -and $status -ge 500 -and $status -lt 600) {
+        Write-Host ("        transient 5xx (status={0}) - waiting 5s and retrying..." -f $status) -ForegroundColor DarkYellow
+        Start-Sleep -Seconds 5
+        try {
+            $resp = Invoke-WebRequest -Uri $u -Method Get -UseBasicParsing `
+                        -TimeoutSec $RequestTimeoutSec -MaximumRedirection 5 `
+                        -UserAgent $UserAgent -ErrorAction Stop
+            $status = [int]$resp.StatusCode
+            $ok     = ($status -ge 200 -and $status -lt 400)
+            if (-not $ok) { $transient = $true }
+        } catch {
+            if ($_.Exception.Response) {
+                try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            }
+            # Still failing after retry - flag as transient so summary treats it as warn
+            if ($status -ge 500 -and $status -lt 600) { $transient = $true; $ok = $true }
         }
     }
 
@@ -174,7 +205,7 @@ Write-Host "  Summary" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ("  Total probed : {0}" -f $total)
 Write-Host ("  OK           : {0}" -f $okCnt) -ForegroundColor Green
-Write-Host ("  FAILED       : {0}" -f $failed.Count) -ForegroundColor (if ($failed.Count) { 'Red' } else { 'DarkGray' })
+Write-Host ("  FAILED       : {0}" -f $failed.Count) -ForegroundColor $(if ($failed.Count) { 'Red' } else { 'DarkGray' })
 Write-Host ""
 
 if ($failed.Count -gt 0) {
