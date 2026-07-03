@@ -110,6 +110,14 @@ transition:color .3s var(--ease);
 }
 .phone:hover{color:var(--red-deep)}
 .phone svg{display:block;flex-shrink:0}
+.meta-strip{
+display:inline-flex;align-items:center;gap:10px;
+font-size:13px;color:var(--muted);font-weight:400;letter-spacing:.02em;white-space:nowrap;
+}
+.meta-strip .weather-icon{width:15px;height:15px;color:var(--red);flex-shrink:0}
+.meta-strip .sep{color:#c0c0c0;font-weight:300}
+.meta-strip .time{font-variant-numeric:tabular-nums}
+.meta-strip .place{color:#a0a0a0}
 .hero{position:relative;padding:130px 0 120px;overflow:hidden}
 .hero .caretghost{
 position:absolute;right:-60px;top:40px;font-size:560px;line-height:1;
@@ -181,6 +189,7 @@ footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wra
 .nav nav{display:none}
 .nav-right{gap:0}
 .phone{font-size:13px}
+.meta-strip{display:none}
 .grid{grid-template-columns:1fr;gap:40px}
 .hero{padding:80px 0 70px}
 .hero .caretghost{font-size:300px;right:-30px;opacity:.04}
@@ -193,6 +202,14 @@ footer .top{flex-direction:column}
 <div class="wrap nav">
 <a href="#"><img class="logo" src="logos/iDezign-ai-logo-v2-transparent.png" alt="iDezign.ai — Technology to the Power of AI"></a>
 <div class="nav-right">
+<div class="meta-strip" aria-live="polite" title="Redding, CA — current conditions">
+<svg class="weather-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"></svg>
+<span class="temp">—</span>
+<span class="sep">·</span>
+<span class="time">—</span>
+<span class="sep">·</span>
+<span class="place">Redding</span>
+</div>
 <a class="phone" href="tel:+15304106450" aria-label="Call iDezign at +1 530 410 6450">
 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
 +1&nbsp;530.410.6450
@@ -281,5 +298,61 @@ footer .top{flex-direction:column}
 </div>
 </div>
 </footer>
+<script>
+/* Redding time + weather widget — Open-Meteo (no key), 10-min cache */
+(function(){
+  var strip = document.querySelector('.meta-strip'); if(!strip) return;
+  var icon = strip.querySelector('.weather-icon');
+  var tempEl = strip.querySelector('.temp');
+  var timeEl = strip.querySelector('.time');
+  var ICONS = {
+    sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+    partly:'<path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/>',
+    cloud:'<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
+    rain:'<line x1="16" y1="13" x2="16" y2="21"/><line x1="8" y1="13" x2="8" y2="21"/><line x1="12" y1="15" x2="12" y2="23"/><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/>',
+    snow:'<path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="8" y1="20" x2="8.01" y2="20"/><line x1="12" y1="18" x2="12.01" y2="18"/><line x1="12" y1="22" x2="12.01" y2="22"/><line x1="16" y1="16" x2="16.01" y2="16"/><line x1="16" y1="20" x2="16.01" y2="20"/>',
+    fog:'<line x1="3" y1="12" x2="21" y2="12"/><line x1="5" y1="7" x2="19" y2="7"/><line x1="5" y1="17" x2="19" y2="17"/>',
+    wind:'<path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>',
+    bolt:'<path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><polyline points="13 11 9 17 15 17 11 23"/>'
+  };
+  function codeToIcon(c){
+    if(c===0) return 'sun';
+    if(c===1||c===2) return 'partly';
+    if(c===3) return 'cloud';
+    if(c>=45&&c<=48) return 'fog';
+    if(c>=51&&c<=67) return 'rain';
+    if(c>=71&&c<=77) return 'snow';
+    if(c>=80&&c<=82) return 'rain';
+    if(c>=85&&c<=86) return 'snow';
+    if(c>=95) return 'bolt';
+    return 'cloud';
+  }
+  function setIcon(name){ icon.innerHTML = ICONS[name] || ICONS.cloud; }
+  function tickTime(){
+    var now = new Date();
+    timeEl.textContent = now.toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour:'numeric',minute:'2-digit',hour12:true});
+  }
+  tickTime(); setInterval(tickTime, 30000);
+  function loadWx(){
+    try{
+      var cached = localStorage.getItem('idz_wx');
+      if(cached){ var p = JSON.parse(cached); if(Date.now()-p.ts < 600000){ tempEl.textContent = p.t+'°'; setIcon(p.icon); return; } }
+    }catch(e){}
+    fetch('https://api.open-meteo.com/v1/forecast?latitude=40.5865&longitude=-122.3917&current=temperature_2m,weather_code,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FLos_Angeles')
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var t = Math.round(j.current.temperature_2m);
+        var wind = j.current.wind_speed_10m;
+        var iconName = codeToIcon(j.current.weather_code);
+        if(iconName==='sun' && wind >= 20) iconName = 'wind'; /* windy but sunny */
+        tempEl.textContent = t+'°';
+        setIcon(iconName);
+        try{ localStorage.setItem('idz_wx', JSON.stringify({t:t, icon:iconName, ts:Date.now()})); }catch(e){}
+      })
+      .catch(function(){ /* silent fail — em-dash placeholder remains */ });
+  }
+  loadWx(); setInterval(loadWx, 600000);
+})();
+</script>
 </body>
 </html>
