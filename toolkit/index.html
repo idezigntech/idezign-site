@@ -62,6 +62,15 @@ transition:all .35s var(--ease);
 }
 .nav .cta:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
 .nav .cta::after{display:none}
+.nav-right{display:flex;align-items:center;gap:32px}
+.phone{
+display:inline-flex;align-items:center;gap:8px;
+font-size:14px;letter-spacing:.02em;color:var(--red);
+font-weight:400;white-space:nowrap;
+transition:color .3s var(--ease);
+}
+.phone:hover{color:var(--red-deep)}
+.phone svg{display:block;flex-shrink:0}
 
 /* page hero */
 .phero{position:relative;padding:108px 0 56px;overflow:hidden}
@@ -161,6 +170,8 @@ footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wra
 @media(max-width:780px){
 .wrap{padding:0 24px}
 .nav nav{display:none}
+.nav-right{gap:0}
+.phone{font-size:13px}
 .tgrid{grid-template-columns:1fr;gap:28px}
 .phero{padding:64px 0 36px}
 .phero .caretghost{font-size:280px;right:-30px;opacity:.04}
@@ -173,6 +184,11 @@ footer .top{flex-direction:column}
 <header>
 <div class="wrap nav">
 <a href="/"><img class="logo" src="/logos/iDezign-ai-logo-v2-transparent.png" alt="iDezign.ai — Technology to the Power of AI"></a>
+<div class="nav-right">
+<a class="phone" href="tel:+15304106450" aria-label="Call iDezign at +1 530 410 6450">
+<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
++1&nbsp;530.410.6450
+</a>
 <nav>
 <a href="/#about">About</a>
 <a href="/#services">Services</a>
@@ -181,6 +197,7 @@ footer .top{flex-direction:column}
 <a href="/#contact">Contact</a>
 <a href="/#contact" class="cta">Start a conversation</a>
 </nav>
+</div>
 </div>
 </header>
 
@@ -391,7 +408,7 @@ Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/down
 <div class="col">
 <h4>Contact</h4>
 <a href="mailto:eric@idezign.com">eric@idezign.com</a>
-<a href="tel:5304106450">530&nbsp;410&nbsp;6450</a>
+<a href="tel:+15304106450">+1&nbsp;530.410.6450</a>
 </div>
 <div class="col">
 <h4>Explore</h4>
