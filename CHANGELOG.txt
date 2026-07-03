@@ -4,6 +4,32 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.4.1 - 2026-07-03 - Migrate: fix exit-16 robocopy failures with paths containing spaces
+  * iDezign_Migration_Utility.ps1 - Invoke-Robocopy was failing with
+    "exit 16" in ~2 seconds on every folder when the destination path
+    contained spaces (e.g. "D:\Paul A BU\Backup_..."). Not a single
+    file was copied - directory was created, but robocopy exited before
+    reading a byte. Root cause: the helper used Start-Job with
+    param($args) inside the ScriptBlock, which shadowed PowerShell's
+    automatic $args variable, and passing the arg array through Start
+    -Job's IPC boundary mangled paths with spaces (robocopy saw
+    "D:\Paul", "A", "BU\..." as three separate args). Fix: rewrote to
+    pass Source/Dest/ExtraArgs as NAMED parameters and construct the
+    robocopy arg array INSIDE the job. Uses & robocopy.exe explicit
+    invocation (not bare robocopy). No more space-related failures.
+
+v3.4 - 2026-07-03 - GUI fallback menu synced to manifest (Duplicate/SyncDrives/DISM)
+  * GUI (v2.9.2-fallback-sync): the built-in fallback tool list
+    ($DefaultToolDefs) - used only when iDezign_Versions.json is missing
+    or unparseable - was still the old 6-tool lineup (no DISM, no Sync
+    Drives, no Duplicate, and still offered the retired SavePDF row).
+    Synced it 1:1 with the v3.3 manifest: 8 tools, same order, same
+    subtitles, and now with icon fields so fallback rows render the same
+    emoji as manifest rows. Result: Duplicate and Sync Drives appear in
+    the launcher menu even in the worst case where the manifest didn't
+    make it into the folder. Manifest remains the source of truth when
+    present - no behavior change on a healthy install.
+
 v3.3 - 2026-07-01 - New Duplicate tool + Cleanup Preflight moves Chrome/MWB early
   * NEW tool: iDezign_Duplicate.ps1 - one-way copy between any two
     locations. Handles folder<->folder, drive<->drive, USB, CD/DVD,
