@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.01-v3.2.2-rename-adsi-scheduledtask-wuscan'
+$ScriptVersion = '2026.07.01-v3.3-preflight-installs'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -1014,6 +1014,122 @@ function Clear-ResumeRunOnce {
     Write-Host "  Resume triggers cleared." -ForegroundColor DarkGray
 }
 
+# ----------------------------------------------------------------------------
+# Preflight: quick installs BEFORE the Windows Update loop
+# ----------------------------------------------------------------------------
+# Runs Chrome install + Chrome default browser + Malwarebytes download BEFORE
+# the multi-hour Phase 0 update loop. Rationale:
+#   * Fail-fast: if a download URL is broken, we know in 60 seconds instead of
+#     3 hours in (previously Phase 1a/1b/1d ran AFTER the WU loop).
+#   * Chrome default is set early, so if the tech browses during the update
+#     loop Chrome is already default.
+#   * User is present during Preflight - they can see + click through any
+#     interactive prompts (rare) instead of the loop stalling silently.
+#
+# Only runs on the initial first-time launch (not on resume after WU reboot).
+# Sets state.PreflightDone so the old Phase 1a/1b/1d blocks below skip
+# execution. Chrome install + default + MWB download code below still exists
+# for backward-compat if PreflightDone is somehow not set (e.g. from a
+# state file created by an older Cleanup version).
+if (-not $ResumeAfterUpdate -and $state -and -not $state.PreflightDone) {
+    Write-Host "`n[Preflight] Quick installs before Windows Update loop..." -ForegroundColor Cyan
+
+    # --- Preflight: Google Chrome install ---
+    if ($doInstallChrome) {
+        Write-Host "`n  [Preflight/Chrome] Installing Google Chrome..." -ForegroundColor Green
+        $chromeUrl = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
+        $chromeMsi = Join-Path $StagingDir 'chrome_enterprise64.msi'
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeMsi -UseBasicParsing -ErrorAction Stop
+            $sizeMB = [math]::Round((Get-Item $chromeMsi).Length / 1MB, 1)
+            Write-Host "  Downloaded Chrome MSI: $sizeMB MB" -ForegroundColor DarkGray
+
+            $exit = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $exit = Start-ProcessWithTimeout -FilePath 'msiexec.exe' `
+                            -ArgumentList @("/i `"$chromeMsi`"", '/qn', '/norestart') `
+                            -TimeoutMinutes 10 -Label 'Chrome MSI installer'
+            }
+            if ($exit -eq 0) {
+                Write-Host "  Chrome installed successfully." -ForegroundColor DarkGray
+            } elseif ($exit -eq -1) {
+                Write-Host "  Chrome install TIMED OUT (>10 min)." -ForegroundColor Red
+            } elseif ($null -ne $exit) {
+                Write-Host "  Chrome installer returned exit code $exit." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  ERROR downloading/installing Chrome: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # --- Preflight: Chrome as default browser for new profiles ---
+    if ($doSetChromeDefault) {
+        Write-Host "`n  [Preflight/Chrome default] Setting Chrome as default for NEW user profiles..." -ForegroundColor Green
+        $xmlDA = @'
+<?xml version="1.0" encoding="UTF-8"?>
+<DefaultAssociations>
+  <Association Identifier=".htm"   ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier=".html"  ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier=".shtml" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier=".xht"   ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier=".xhtml" ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier=".webp"  ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier="http"   ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier="https"  ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+  <Association Identifier="ftp"    ProgId="ChromeHTML" ApplicationName="Google Chrome" />
+</DefaultAssociations>
+'@
+        $xmlPath = Join-Path $StagingDir 'DefaultAssociations.xml'
+        try {
+            $xmlDA | Set-Content -Path $xmlPath -Encoding UTF8 -ErrorAction Stop
+            & dism.exe /Online /Import-DefaultAppAssociations:"$xmlPath" | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  DISM import OK - new user profiles will get Chrome as default." -ForegroundColor DarkGray
+            } else {
+                Write-Host "  DISM returned exit code $LASTEXITCODE. Check Chrome install." -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  ERROR setting default associations: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # --- Preflight: Malwarebytes installer download (NO install) ---
+    if ($doDownloadMWB) {
+        Write-Host "`n  [Preflight/MWB] Downloading Malwarebytes installer to Downloads..." -ForegroundColor Green
+        $downloadsDir = $null
+        try {
+            $downloadsDir = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+        } catch { }
+        if (-not $downloadsDir -or -not (Test-Path $downloadsDir)) {
+            $downloadsDir = Join-Path $env:USERPROFILE 'Downloads'
+            if (-not (Test-Path $downloadsDir)) { New-Item -Path $downloadsDir -ItemType Directory -Force | Out-Null }
+        }
+        $mwbUrl  = 'https://downloads.malwarebytes.com/file/mb-windows'
+        $mwbFile = Join-Path $downloadsDir 'MBSetup.exe'
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -ErrorAction Stop
+            $sizeMB = [math]::Round((Get-Item $mwbFile).Length / 1MB, 1)
+            Write-Host "  Downloaded MBSetup.exe: $sizeMB MB" -ForegroundColor Green
+            Write-Host "  Location: $mwbFile" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  ERROR downloading Malwarebytes: $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+
+    # Mark preflight done so the old Phase 1a/1b/1d blocks skip
+    if ($null -eq $state.PreflightDone) {
+        $state | Add-Member -NotePropertyName 'PreflightDone' -NotePropertyValue $true -Force
+    } else {
+        $state.PreflightDone = $true
+    }
+    Save-State
+    Write-Host "`n[Preflight] Complete. Starting Windows Update loop next." -ForegroundColor Cyan
+} elseif ($state.PreflightDone) {
+    Write-Host "`n[Preflight] Already done - resuming Windows Update loop." -ForegroundColor DarkGray
+}
+
 if (-not $skipUpdates) {
 
     $maxPasses = 6
@@ -1302,7 +1418,9 @@ function Get-RemoteFile {
 }
 
 # --- 1a. Google Chrome ---
-if ($doInstallChrome) {
+if ($doInstallChrome -and $state.PreflightDone) {
+    Write-Host "`n[Phase 1a] Chrome install: already done in Preflight." -ForegroundColor DarkGray
+} elseif ($doInstallChrome) {
     Write-Host "`n[Phase 1a] Installing Google Chrome..." -ForegroundColor Green
     $chromeUrl = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi'
     $chromeMsi = Join-Path $StagingDir 'chrome_enterprise64.msi'
@@ -1337,7 +1455,9 @@ if ($doInstallChrome) {
 }
 
 # --- 1b. Set Chrome as default for new users (DISM Default App Associations) ---
-if ($doSetChromeDefault) {
+if ($doSetChromeDefault -and $state.PreflightDone) {
+    Write-Host "`n[Phase 1b] Chrome default browser: already done in Preflight." -ForegroundColor DarkGray
+} elseif ($doSetChromeDefault) {
     Write-Host "`n[Phase 1b] Setting Chrome as default for NEW user profiles..." -ForegroundColor Green
 
     $xml = @'
@@ -1408,7 +1528,9 @@ if ($doInstallClaude -and $IsServer) {
 # Stages the latest MWB installer in the user's Downloads folder so the
 # technician can run it manually after deployment. Intentionally NOT
 # installed during cleanup - see prompt-time comment for rationale.
-if ($doDownloadMWB) {
+if ($doDownloadMWB -and $state.PreflightDone) {
+    Write-Host "`n[Phase 1d] Malwarebytes download: already done in Preflight." -ForegroundColor DarkGray
+} elseif ($doDownloadMWB) {
     Write-Host "`n[Phase 1d] Downloading Malwarebytes installer to Downloads..." -ForegroundColor Green
 
     # Resolve user's Downloads folder properly (handles redirected/OneDrive Downloads)
