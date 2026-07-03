@@ -1,0 +1,91 @@
+{
+  "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
+  "manifestUpdated": "2026-07-03",
+  "toolkitVersion": "3.4.2",
+  "scripts": {
+    "iDezign_Common.psm1": "2026.07.01-v3.2.1-fullpath-resolve",
+    "iDezign_Cleanup_Utility.ps1": "2026.07.03-v3.4.2-wu-recover-vss-wmi",
+    "iDezign_Diagnostics.ps1": "2026.07.01-v3.1.1-tv-url",
+    "iDezign_Remediation.ps1": "2026.06.30-v3.0-pdf-merge",
+    "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
+    "iDezign_Toolkit_GUI.ps1": "2026.07.03-gui-v2.9.2-fallback-sync",
+    "iDezign_Migration_Utility.ps1": "2026.07.03-v3.4.1-migrate-space-safe",
+    "iDezign_DISM.ps1": "2026.06.23-dism-v1.1",
+    "iDezign_SyncDrives.ps1": "2026.06.24-syncdrives-v1.1",
+    "iDezign_Duplicate.ps1": "2026.07.01-v3.3-duplicate-v1"
+  },
+  "tools": [
+    {
+      "key": "Diagnostics",
+      "displayName": "Diagnostics",
+      "subtitle": "Health check + HTML report",
+      "icon": "🔍",
+      "scriptFile": "iDezign_Diagnostics.ps1",
+      "destructive": false,
+      "order": 1
+    },
+    {
+      "key": "Cleanup",
+      "displayName": "Cleanup",
+      "subtitle": "Maintenance + imaging prep",
+      "icon": "🧹",
+      "scriptFile": "iDezign_Cleanup_Utility.ps1",
+      "destructive": false,
+      "order": 2
+    },
+    {
+      "key": "Remediation",
+      "displayName": "Remediation",
+      "subtitle": "Interactive fixer + optional combined PDF",
+      "icon": "🔧",
+      "scriptFile": "iDezign_Remediation.ps1",
+      "destructive": false,
+      "order": 3
+    },
+    {
+      "key": "Migrate",
+      "displayName": "Migrate",
+      "subtitle": "Back up + move user data",
+      "icon": "🪿",
+      "scriptFile": "iDezign_Migration_Utility.ps1",
+      "destructive": false,
+      "order": 4
+    },
+    {
+      "key": "DISM",
+      "displayName": "DISM",
+      "subtitle": "Component store + system file repair",
+      "icon": "🩺",
+      "scriptFile": "iDezign_DISM.ps1",
+      "destructive": false,
+      "order": 5
+    },
+    {
+      "key": "SyncDrives",
+      "displayName": "Sync Drives",
+      "subtitle": "Safe two-way folder sync (trash-backed)",
+      "icon": "🔄",
+      "scriptFile": "iDezign_SyncDrives.ps1",
+      "destructive": false,
+      "order": 6
+    },
+    {
+      "key": "Duplicate",
+      "displayName": "Duplicate",
+      "subtitle": "One-way copy between any two locations",
+      "icon": "📋",
+      "scriptFile": "iDezign_Duplicate.ps1",
+      "destructive": false,
+      "order": 7
+    },
+    {
+      "key": "Reset",
+      "displayName": "Reset to OOBE",
+      "subtitle": "Sysprep for imaging (destructive)",
+      "icon": "⚠",
+      "scriptFile": "iDezign_Reset_to_OOBE.ps1",
+      "destructive": true,
+      "order": 8
+    }
+  ]
+}
