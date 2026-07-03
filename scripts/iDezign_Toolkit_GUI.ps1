@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.06.29-gui-v2.9.1-bigwindow'
+$ScriptVersion = '2026.07.03-gui-v2.9.2-fallback-sync'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -76,13 +76,20 @@ foreach ($cand in @('iDezign-logo-trim.png','iDezign-ai-logo-v2-transparent.png'
 
 # --- Manifest (single source of truth) --------------------------------------
 $ManifestPath = Join-Path $ScriptDir 'iDezign_Versions.json'
+# v2.9.2: fallback list synced to the v3.3 manifest (adds DISM, Sync Drives,
+# Duplicate; drops SavePDF) so the menu is identical even if the manifest is
+# missing or unparseable. The manifest remains the source of truth when present.
+# Icons use [char]::ConvertFromUtf32() instead of literal emoji: this file has
+# no BOM, so PS 5.1 would read literal UTF-8 emoji as ANSI mojibake.
 $DefaultToolDefs = @(
-    [PSCustomObject]@{ key='Diagnostics'; displayName='Diagnostics';        subtitle='Health check + HTML report';        scriptFile='iDezign_Diagnostics.ps1';       destructive=$false; order=1 }
-    [PSCustomObject]@{ key='Cleanup';     displayName='Cleanup';            subtitle='Maintenance + imaging prep';        scriptFile='iDezign_Cleanup_Utility.ps1';   destructive=$false; order=2 }
-    [PSCustomObject]@{ key='Remediation'; displayName='Remediation';        subtitle='Interactive issue fixer';           scriptFile='iDezign_Remediation.ps1';       destructive=$false; order=3 }
-    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE';      subtitle='Sysprep for imaging (destructive)'; scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=4 }
-    [PSCustomObject]@{ key='SavePDF';     displayName='Save PDF to Desktop';subtitle='Latest Diagnostics report -> PDF';  scriptFile='iDezign_SavePDF.ps1';           destructive=$false; order=5 }
-    [PSCustomObject]@{ key='Migrate';     displayName='Migrate';            subtitle='Back up + move user data';          scriptFile='iDezign_Migration_Utility.ps1'; destructive=$false; order=6 }
+    [PSCustomObject]@{ key='Diagnostics'; displayName='Diagnostics';   subtitle='Health check + HTML report';                icon=([char]::ConvertFromUtf32(0x1F50D)); scriptFile='iDezign_Diagnostics.ps1';       destructive=$false; order=1 }
+    [PSCustomObject]@{ key='Cleanup';     displayName='Cleanup';       subtitle='Maintenance + imaging prep';                icon=([char]::ConvertFromUtf32(0x1F9F9)); scriptFile='iDezign_Cleanup_Utility.ps1';   destructive=$false; order=2 }
+    [PSCustomObject]@{ key='Remediation'; displayName='Remediation';   subtitle='Interactive fixer + optional combined PDF'; icon=([char]::ConvertFromUtf32(0x1F527)); scriptFile='iDezign_Remediation.ps1';       destructive=$false; order=3 }
+    [PSCustomObject]@{ key='Migrate';     displayName='Migrate';       subtitle='Back up + move user data';                  icon=([char]::ConvertFromUtf32(0x1FABF)); scriptFile='iDezign_Migration_Utility.ps1'; destructive=$false; order=4 }
+    [PSCustomObject]@{ key='DISM';        displayName='DISM';          subtitle='Component store + system file repair';      icon=([char]::ConvertFromUtf32(0x1FA7A)); scriptFile='iDezign_DISM.ps1';              destructive=$false; order=5 }
+    [PSCustomObject]@{ key='SyncDrives';  displayName='Sync Drives';   subtitle='Safe two-way folder sync (trash-backed)';   icon=([char]::ConvertFromUtf32(0x1F504)); scriptFile='iDezign_SyncDrives.ps1';        destructive=$false; order=6 }
+    [PSCustomObject]@{ key='Duplicate';   displayName='Duplicate';     subtitle='One-way copy between any two locations';    icon=([char]::ConvertFromUtf32(0x1F4CB)); scriptFile='iDezign_Duplicate.ps1';         destructive=$false; order=7 }
+    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=8 }
 )
 $ToolDefs = $null
 $ToolkitVersion = '2.0'
