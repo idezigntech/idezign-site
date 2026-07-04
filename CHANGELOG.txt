@@ -4,6 +4,26 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.4.3 - 2026-07-03 - Launcher: suppress the PowerShell console windows (GUI-only experience)
+  * Double-clicking the .exe used to pop a chain of console windows (cmd
+    from the .bat, PowerShell, elevated PowerShell) and the last console
+    stayed open BEHIND the GUI for the whole session. Two changes:
+  * GUI (v2.9.3-hide-console): hides its own console via ShowWindow(
+    GetConsoleWindow(), SW_HIDE) right after startup. Deliberately NOT
+    '-WindowStyle Hidden' at launch - AppLocker/Smart App Control kill
+    elevated PowerShell that starts pre-hidden (malware-loader pattern,
+    see v2.9.1 notes). Visible launch + immediate self-hide passes those
+    policies; the console is a sub-second flash instead of a permanent
+    background window.
+  * iDezign TOOLKIT.bat (v2.9.2-bat): self-minimizes on first launch
+    (relaunches itself with start /min, so the console is a taskbar blip)
+    and the elevated PowerShell spawns with -WindowStyle Minimized
+    (minimized is a normal visible launch, unlike hidden). Net result:
+    double-click .exe -> UAC prompt -> GUI. No console popups on screen.
+  * Tools launched FROM the menu (Cleanup, Diagnostics, etc.) still open
+    their own PowerShell windows - those are interactive consoles by
+    design.
+
 v3.4.2 - 2026-07-03 - Cleanup: WU scan recovery + shadow deletion via WMI (both from live field run)
   * Cleanup Phase 0: Get-WindowsUpdate "Value does not fall within the
     expected range" (known PSWindowsUpdate first-run WU-agent issue,
