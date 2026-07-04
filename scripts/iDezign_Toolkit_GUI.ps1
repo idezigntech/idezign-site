@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.07.03-gui-v2.9.2-fallback-sync'
+$ScriptVersion = '2026.07.03-gui-v2.9.3-hide-console'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -43,6 +43,27 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Warning) | Out-Null
     exit 1
+}
+
+# --- Hide our own console window ---------------------------------------------
+# v2.9.3: the GUI used to leave its PowerShell console open behind the window
+# for the whole session (plus the launch chain flashed extra consoles). Hide
+# our OWN console AFTER a normal visible launch via ShowWindow. Deliberately
+# NOT '-WindowStyle Hidden' at launch: AppLocker / Smart App Control kill
+# elevated PowerShell that starts pre-hidden (known malware-loader pattern -
+# see the v2.9.1 notes in 'iDezign TOOLKIT.bat'). Visible launch + immediate
+# self-hide reads as normal app behavior to those policies.
+try {
+    Add-Type -Name ConsoleUtil -Namespace iDezign -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll")]  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+'@ -ErrorAction Stop
+    $consoleHwnd = [iDezign.ConsoleUtil]::GetConsoleWindow()
+    if ($consoleHwnd -ne [IntPtr]::Zero) {
+        [void][iDezign.ConsoleUtil]::ShowWindow($consoleHwnd, 0)   # 0 = SW_HIDE
+    }
+} catch {
+    Write-Diag ("console hide failed (non-fatal): {0}" -f $_.Exception.Message)
 }
 
 # --- WPF assemblies ----------------------------------------------------------
