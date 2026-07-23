@@ -4,6 +4,39 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.5 - 2026-07-03 - Virus Scan is its own tool; Cleanup gets fewer prompts + MWB install
+  * NEW tool: iDezign_VirusScan.ps1 (menu #6, icon microbe) - the Defender
+    Quick/Full/Skip scan that used to be Cleanup Phase 1i, unchanged:
+    signature update first, scan in a background job with 60-second
+    heartbeat, threat report scoped to this scan window, timestamped log
+    (now saved to Desktop). Run a scan any time without a full Cleanup.
+    Menu renumbered: Sync Drives 7, Duplicate 8, Reset 9.
+  * Cleanup: Defender scan prompt + Phase 1i REMOVED (see above). Old
+    state.json files with ScanType/DoFullScan fields are ignored safely.
+  * Cleanup: "Also set Chrome as default?" prompt REMOVED - installing
+    Chrome now ALWAYS sets it default for new profiles (DISM XML).
+  * Cleanup: "Apply iDezign default settings?" Open-Shell prompt REMOVED -
+    installing Open-Shell now ALWAYS applies the Win7-style baseline.
+  * Cleanup: NEW optional Malwarebytes INSTALL right after the download
+    (silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART - MBSetup is Inno
+    Setup-based). Download-only remains the default answer for pre-image
+    boxes; the installer stays in ~\Downloads either way.
+  * GUI (v2.9.4): fallback tool list synced with the new 9-tool menu.
+
+v3.4.4 - 2026-07-03 - Common: Get-AdminGroupName WMI fallback (silences Diagnostics 12/12 warning)
+  * iDezign_Common.psm1 (Get-AdminGroupName): "Could not resolve
+    Administrators group by SID, falling back to 'Administrators'" printed
+    on every Diagnostics 12/12 run on Win 11 25H2. Root cause: Get-
+    LocalGroup lives in the LocalAccounts module that 25H2 fails to auto-
+    load (same class of issue as Get-LocalUser, fixed for other call
+    sites in v3.1). Harmless on English Windows (the fallback name is
+    correct) but would misidentify the group on non-English systems.
+    Added a WMI middle step - Win32_Group filtered by well-known SID
+    S-1-5-32-544 - which has no module dependency and works on every
+    Windows version and language. The literal-name fallback now only
+    fires if BOTH the cmdlet and WMI fail. Cleanup's inline copy of this
+    logic already had the WMI step; module and script now match.
+
 v3.4.3 - 2026-07-03 - Launcher: suppress the PowerShell console windows (GUI-only experience)
   * Double-clicking the .exe used to pop a chain of console windows (cmd
     from the .bat, PowerShell, elevated PowerShell) and the last console
