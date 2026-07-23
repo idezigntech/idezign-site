@@ -26,7 +26,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.07.01-v3.2.1-fullpath-resolve'
+$script:ModuleVersion = '2026.07.03-v3.4.4-admingroup-cim'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -285,12 +285,21 @@ function Read-iDezignYN {
 function Get-AdminGroupName {
     [CmdletBinding()]
     param()
+    # v3.4.4: Get-LocalGroup comes from the LocalAccounts module, which fails
+    # to auto-load on Win 11 25H2 (same issue as Get-LocalUser, see v3.1
+    # notes). That made Diagnostics 12/12 print the fallback warning on every
+    # 25H2 machine. New middle step: query WMI by well-known SID - CIM has no
+    # module dependency, works on every Windows version and language. (The
+    # inline copy in Cleanup Phase 3 already did this; now the module matches.)
     try {
         return (Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction Stop).Name
-    } catch {
-        Write-Host "  Could not resolve Administrators group by SID, falling back to 'Administrators'." -ForegroundColor DarkYellow
-        return 'Administrators'
-    }
+    } catch { }
+    try {
+        $g = Get-CimInstance Win32_Group -Filter "SID='S-1-5-32-544' AND LocalAccount=TRUE" -ErrorAction Stop
+        if ($g -and $g.Name) { return $g.Name }
+    } catch { }
+    Write-Host "  Could not resolve Administrators group by SID (cmdlet + WMI), falling back to 'Administrators'." -ForegroundColor DarkYellow
+    return 'Administrators'
 }
 #endregion
 
