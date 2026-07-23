@@ -15,14 +15,14 @@
 #       continuing. This prevents DISM error 0x800f0806 in Phase 2.
 #   1.  Install software + config (optional):
 #        a. Google Chrome (Enterprise MSI, silent)
-#        b. Chrome as default browser for NEW user profiles (DISM XML)
+#        b. Chrome as default browser for NEW profiles (AUTO with a. - v3.5)
 #        c. Claude Desktop (MSIX, machine-wide)
-#        d. Malwarebytes installer (download only, no install)
+#        d. Malwarebytes installer (download + optional silent install - v3.5)
 #        e. iDezign-branded TeamViewer Host (silent install)
 #        f. Power settings (HDD never, display 1hr, no sleep/hibernate)
-#        g. Open-Shell classic Start Menu (via Ninite, + iDezign defaults)
+#        g. Open-Shell classic Start Menu (Ninite; iDezign Win7 defaults AUTO - v3.5)
 #        h. Network -> Private + File/Print sharing + discovery
-#        i. Microsoft Defender scan (Quick / Full / Skip) + log file
+#        i. Defender scan: MOVED to standalone iDezign_VirusScan.ps1 (v3.5)
 #        j. Defender exclusions for Dentrix/SQL paths
 #        k. Nuke OneDrive (uninstall + block reinstall + restore folders)
 #           + optional Teams personal removal + Microsoft nag disable
@@ -59,7 +59,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.03-v3.4.2-wu-recover-vss-wmi'
+$ScriptVersion = '2026.07.03-v3.5-scan-split-auto-defaults'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -481,26 +481,31 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ""
     $answer = Read-Host "Install Google Chrome? (Y/N)"
     $doInstallChrome    = $answer -match '^(y|yes)$'
-    $doSetChromeDefault = $false
-    if ($doInstallChrome) {
-        $answer = Read-Host "  Also set Chrome as default browser for NEW user profiles? (Y/N)"
-        $doSetChromeDefault = $answer -match '^(y|yes)$'
-    }
+    # v3.5: the "also set default?" sub-question is gone - installing Chrome
+    # ALWAYS sets it as default browser for NEW user profiles (DISM XML).
+    # Nobody ever answered N; one less prompt.
+    $doSetChromeDefault = $doInstallChrome
 
     # --- Install Claude Desktop ---
     Write-Host ""
     $answer = Read-Host "Install Claude Desktop? (Y/N)"
     $doInstallClaude = $answer -match '^(y|yes)$'
 
-    # --- Download (NOT install) Malwarebytes to Downloads folder ---
-    # Stages the installer for the technician to run manually after imaging.
-    # We don't install it during cleanup because:
-    #  (a) MWB asks the user for a license/trial selection
-    #  (b) Running fresh MWB on an offline pre-image box would update sigs anyway
-    #  (c) Better to install it post-deploy when the box has its final identity
+    # --- Download Malwarebytes to Downloads folder (+ optional install) ---
+    # The installer is always staged to Downloads so the tech can run it
+    # later. v3.5 adds an opt-in INSTALL right after the download: MBSetup
+    # is Inno Setup-based, so /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+    # installs unattended (starts the 14-day Premium trial; tech/customer
+    # picks license or Free at first launch). Skip the install for
+    # pre-image boxes that should get MWB post-deploy instead.
     Write-Host ""
-    $answer = Read-Host "Download Malwarebytes installer to Downloads folder (no install)? (Y/N)"
+    $answer = Read-Host "Download Malwarebytes installer to Downloads folder? (Y/N)"
     $doDownloadMWB = $answer -match '^(y|yes)$'
+    $doInstallMWB  = $false
+    if ($doDownloadMWB) {
+        $answer = Read-Host "  Also INSTALL Malwarebytes now (silent, after download)? (Y/N)"
+        $doInstallMWB = $answer -match '^(y|yes)$'
+    }
 
     # --- Install iDezign-branded TeamViewer Host ---
     # The custom-branded URL custom.teamviewer.com/idhelp serves an EXE that
@@ -531,14 +536,11 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ""
     $answer = Read-Host "Install Open-Shell (classic Start Menu via Ninite)? (Y/N)"
     $doInstallOpenShell = $answer -match '^(y|yes)$'
-    $doApplyOpenShellDefaults = $false
-    if ($doInstallOpenShell) {
-        # Apply iDezign baseline Open-Shell settings (Win7-style menu, Aero skin)
-        # via registry. Writes to .DEFAULT hive (affects new user profiles) and
-        # HKCU (for current user verification). Existing users keep their settings.
-        $answer = Read-Host "  Apply iDezign default settings (Win7-style menu)? (Y/N)"
-        $doApplyOpenShellDefaults = $answer -match '^(y|yes)$'
-    }
+    # v3.5: the "apply iDezign defaults?" sub-question is gone - installing
+    # Open-Shell ALWAYS applies the baseline (Win7-style menu, Aero skin) via
+    # registry (.DEFAULT hive for new profiles + HKCU). The whole point of
+    # installing Open-Shell is the Win7 menu; one less prompt.
+    $doApplyOpenShellDefaults = $doInstallOpenShell
 
     # --- Install vendor driver management tools (hardware-aware, skipped on servers) ---
     # Detects hardware and auto-installs the vendor's driver management app so
@@ -569,29 +571,11 @@ if (-not $ResumeAfterUpdate) {
     $answer = Read-Host "Set network profiles to PRIVATE + enable file sharing/discovery? (Y/N)"
     $doSetNetworkPrivate = $answer -match '^(y|yes)$'
 
-    # --- Microsoft Defender scan ---
-    # Three options:
-    #   Q = Quick scan (3-5 min) - checks active malware locations only
-    #   F = Full scan (30 min - 4 hours) - every file, including archives
-    #   S = Skip   (or just press Enter)
-    # Quick is usually fine for fresh-image prep where the disk is empty.
-    # Full is for hand-me-down workstations where you don't know the history.
-    # Default is Skip - hit Enter to bypass when iterating on other phases.
-    Write-Host ""
-    Write-Host "  Quick scan = 3-5 min, Full scan = 30 min - 4 hours." -ForegroundColor DarkYellow
-    $scanType = 'None'
-    do {
-        $raw = Read-Host "Defender scan: (Q)uick / (F)ull / (S)kip  [Enter = Skip]"
-        $answer = $raw.Trim().ToUpper()
-        # Empty (just Enter pressed) = Skip
-        if ([string]::IsNullOrWhiteSpace($answer)) { $answer = 'S' }
-        switch ($answer) {
-            'Q'    { $scanType = 'Quick' }
-            'F'    { $scanType = 'Full' }
-            'S'    { $scanType = 'None' }
-            default { $answer = $null; Write-Host "  Please enter Q, F, S, or press Enter to skip." -ForegroundColor Yellow }
-        }
-    } while (-not $answer)
+    # --- Microsoft Defender scan: REMOVED in v3.5 ---
+    # The Quick/Full/Skip scan moved to its own standalone menu tool,
+    # iDezign_VirusScan.ps1 (same choices, same engine, same log output).
+    # Cleanup runs shorter and the scan can now be run any time without
+    # dragging the whole cleanup along.
 
     # --- Defender exclusions for Dentrix/SQL ---
     # Dental practice workstations run Dentrix which uses SQL Server. Defender
@@ -659,13 +643,13 @@ if (-not $ResumeAfterUpdate) {
         DoSetChromeDefault       = [bool]$doSetChromeDefault
         DoInstallClaude          = [bool]$doInstallClaude
         DoDownloadMWB            = [bool]$doDownloadMWB
+        DoInstallMWB             = [bool]$doInstallMWB
         DoInstallTV              = [bool]$doInstallTV
         DoConfigurePower         = [bool]$doConfigurePower
         DoInstallOpenShell       = [bool]$doInstallOpenShell
         DoApplyOpenShellDefaults = [bool]$doApplyOpenShellDefaults
         DoInstallVendorDrivers   = [bool]$doInstallVendorDrivers
         DoSetNetworkPrivate      = [bool]$doSetNetworkPrivate
-        ScanType                 = [string]$scanType
         DoDentrixExclusions      = [bool]$doDentrixExclusions
         DoNukeOneDrive           = [bool]$doNukeOneDrive
         DoStripTeamsPersonal     = [bool]$doStripTeamsPersonal
@@ -682,26 +666,19 @@ if (-not $ResumeAfterUpdate) {
 
     Write-Host ""
     Write-Host "Summary:" -ForegroundColor Cyan
-    $chromeSummary = if ($doInstallChrome) {
-        if ($doSetChromeDefault) { 'YES (+ set default)' } else { 'YES' }
+    $chromeSummary = if ($doInstallChrome) { 'YES (+ set default)' } else { 'NO' }
+    $openShellSummary = if ($doInstallOpenShell) { 'YES (+ iDezign Win7 defaults)' } else { 'NO' }
+    $mwbSummary = if ($doDownloadMWB) {
+        if ($doInstallMWB) { 'YES (download + silent install)' } else { 'YES (download only, to ~\Downloads)' }
     } else { 'NO' }
-    $openShellSummary = if ($doInstallOpenShell) {
-        if ($doApplyOpenShellDefaults) { 'YES (+ iDezign defaults)' } else { 'YES (default config)' }
-    } else { 'NO' }
-    $scanSummary = switch ($scanType) {
-        'Quick' { 'YES - Quick scan (3-5 min)' }
-        'Full'  { 'YES - Full scan (30min-4hr)' }
-        default { 'NO' }
-    }
     Write-Host ("  Install Chrome  : " + $chromeSummary)
     Write-Host ("  Install Claude  : " + ($(if($doInstallClaude){'YES'}else{'NO'})))
     Write-Host ("  Install TV Host : " + ($(if($doInstallTV){'YES (iDezign branded)'}else{'NO'})))
-    Write-Host ("  Download MWB    : " + ($(if($doDownloadMWB){'YES (to ~\Downloads)'}else{'NO'})))
+    Write-Host ("  Malwarebytes    : " + $mwbSummary)
     Write-Host ("  Install OpenShl : " + $openShellSummary)
     Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel per-hw)'}else{'NO'})))
     Write-Host ("  Power settings  : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr / no sleep/hibernate)'}else{'NO'})))
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
-    Write-Host ("  Defender scan   : " + $scanSummary)
     Write-Host ("  Dentrix excl.   : " + ($(if($doDentrixExclusions){'YES (Dentrix + SQL paths)'}else{'NO'})))
     # OneDrive nuke summary with sub-option indicators
     $odSummary = if ($doNukeOneDrive) {
@@ -740,14 +717,9 @@ if (-not $ResumeAfterUpdate) {
             $doApplyOpenShellDefaults = [bool]$state.DoApplyOpenShellDefaults
             $doInstallVendorDrivers = [bool]$state.DoInstallVendorDrivers
             $doSetNetworkPrivate = [bool]$state.DoSetNetworkPrivate
-            # ScanType is the new field. Fall back to DoFullScan for older state files.
-            if ($null -ne $state.ScanType -and $state.ScanType -ne '') {
-                $scanType = [string]$state.ScanType
-            } elseif ($state.DoFullScan) {
-                $scanType = 'Full'   # old state file with the bool field
-            } else {
-                $scanType = 'None'
-            }
+            # v3.5: Defender scan removed from Cleanup (own tool now). Old
+            # state files may still carry ScanType/DoFullScan - ignored.
+            $doInstallMWB = if ($null -ne $state.DoInstallMWB) { [bool]$state.DoInstallMWB } else { $false }
             $doDentrixExclusions = [bool]$state.DoDentrixExclusions
             $doNukeOneDrive       = [bool]$state.DoNukeOneDrive
             $doStripTeamsPersonal = [bool]$state.DoStripTeamsPersonal
@@ -784,8 +756,8 @@ if (-not $ResumeAfterUpdate) {
             if ($null -eq $state.DoSetNetworkPrivate) {
                 $state | Add-Member -NotePropertyName 'DoSetNetworkPrivate' -NotePropertyValue $false -Force
             }
-            if ($null -eq $state.ScanType) {
-                $state | Add-Member -NotePropertyName 'ScanType' -NotePropertyValue $scanType -Force
+            if ($null -eq $state.DoInstallMWB) {
+                $state | Add-Member -NotePropertyName 'DoInstallMWB' -NotePropertyValue $false -Force
             }
             if ($null -eq $state.DoDentrixExclusions) {
                 $state | Add-Member -NotePropertyName 'DoDentrixExclusions' -NotePropertyValue $false -Force
@@ -804,21 +776,21 @@ if (-not $ResumeAfterUpdate) {
         } catch {
             Write-Host "WARNING: could not parse $StateFile - optional phases will be skipped." -ForegroundColor Yellow
             $doInstallChrome = $false; $doSetChromeDefault = $false
-            $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallTV = $false
+            $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallMWB = $false; $doInstallTV = $false
             $doConfigurePower = $false
             $doInstallOpenShell = $false; $doApplyOpenShellDefaults = $false
             $doInstallVendorDrivers = $false
-            $doSetNetworkPrivate = $false; $scanType = 'None'; $doDentrixExclusions = $false
+            $doSetNetworkPrivate = $false; $doDentrixExclusions = $false
             $doNukeOneDrive = $false; $doStripTeamsPersonal = $false; $doStripMSnags = $false
             $doRenameComputer = $false; $doRenameUser = $false
         }
     } else {
         Write-Host "WARNING: state file not found - optional phases will be skipped." -ForegroundColor Yellow
         $doInstallChrome = $false; $doSetChromeDefault = $false
-        $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallTV = $false
+        $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallMWB = $false; $doInstallTV = $false
         $doConfigurePower = $false
         $doInstallOpenShell = $false; $doApplyOpenShellDefaults = $false
-        $doSetNetworkPrivate = $false; $scanType = 'None'; $doDentrixExclusions = $false
+        $doSetNetworkPrivate = $false; $doDentrixExclusions = $false
         $doNukeOneDrive = $false; $doStripTeamsPersonal = $false; $doStripMSnags = $false
         $doRenameComputer = $false; $doRenameUser = $false
     }
@@ -1107,14 +1079,46 @@ if (-not $ResumeAfterUpdate -and $state -and -not $state.PreflightDone) {
         }
         $mwbUrl  = 'https://downloads.malwarebytes.com/file/mb-windows'
         $mwbFile = Join-Path $downloadsDir 'MBSetup.exe'
+        $mwbDownloaded = $false
         try {
             $ProgressPreference = 'SilentlyContinue'
             Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -ErrorAction Stop
             $sizeMB = [math]::Round((Get-Item $mwbFile).Length / 1MB, 1)
             Write-Host "  Downloaded MBSetup.exe: $sizeMB MB" -ForegroundColor Green
             Write-Host "  Location: $mwbFile" -ForegroundColor DarkGray
+            $mwbDownloaded = $true
         } catch {
             Write-Host "  ERROR downloading Malwarebytes: $($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        # --- v3.5: optional silent install right after the download ---
+        # MBSetup is Inno Setup-based: /VERYSILENT /SUPPRESSMSGBOXES
+        # /NORESTART installs unattended (14-day Premium trial starts;
+        # license key or Free mode is chosen at first launch).
+        if ($doInstallMWB -and $mwbDownloaded) {
+            Write-Host "`n  [Preflight/MWB] Installing Malwarebytes (silent)..." -ForegroundColor Green
+            $mwbExit = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $mwbExit = Start-ProcessWithTimeout -FilePath $mwbFile `
+                            -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') `
+                            -TimeoutMinutes 10 -Label 'Malwarebytes installer'
+            } else {
+                try {
+                    $p = Start-Process -FilePath $mwbFile -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru -Wait
+                    $mwbExit = $p.ExitCode
+                } catch {
+                    Write-Host "  ERROR launching Malwarebytes installer: $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+            if ($mwbExit -eq 0) {
+                Write-Host "  Malwarebytes installed successfully." -ForegroundColor DarkGray
+            } elseif ($mwbExit -eq -1) {
+                Write-Host "  Malwarebytes install TIMED OUT (>10 min) - installer is still in Downloads for a manual run." -ForegroundColor Red
+            } elseif ($null -ne $mwbExit) {
+                Write-Host "  Malwarebytes installer returned exit code $mwbExit - installer remains in Downloads." -ForegroundColor Yellow
+            }
+        } elseif ($doInstallMWB -and -not $mwbDownloaded) {
+            Write-Host "  Skipping Malwarebytes install - download failed." -ForegroundColor DarkYellow
         }
     }
 
@@ -1952,124 +1956,12 @@ if ($doSetNetworkPrivate) {
     Write-Host "`n[Phase 1h] Network profile change: SKIPPED." -ForegroundColor DarkGray
 }
 
-# --- 1i. Microsoft Defender scan (Quick / Full / Skip) ---
-# Configurable scan type set during initial prompts:
-#   $scanType = 'Quick' (~3-5 min)  - active malware locations only
-#   $scanType = 'Full'  (30 min - 4 hr) - every file including archives
-#   $scanType = 'None'  - skip entirely
-# We use Start-MpScan in a background job + poll status every 60 sec so the
-# user sees progress and the script doesn't appear hung. Signatures are
-# refreshed first - no point scanning with stale definitions. Threats found
-# during this scan are reported at the end AND written to a timestamped log
-# file in the staging directory for record-keeping.
-if ($scanType -ne 'None') {
-    Write-Host "`n[Phase 1i] Running Microsoft Defender $($scanType.ToLower()) scan..." -ForegroundColor Green
-
-    # Set up the scan log file path. Created before scan starts so even errors
-    # get logged. Timestamp ensures multiple runs don't overwrite each other.
-    $scanLogFile = Join-Path $StagingDir ("scan_results_$(Get-Date -Format 'yyyy-MM-dd_HHmm').txt")
-
-    # Helper: write to both console and the log file. Wrapped in a function so
-    # both work consistently across the phase.
-    function Write-ScanLog {
-        param(
-            [string]$Text,
-            [string]$Color = 'DarkGray'
-        )
-        Write-Host $Text -ForegroundColor $Color
-        try {
-            $logLine = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Text"
-            Add-Content -Path $scanLogFile -Value $logLine -Encoding UTF8 -ErrorAction SilentlyContinue
-        } catch { }
-    }
-
-    Write-ScanLog "Scan log: $scanLogFile" 'DarkGray'
-
-    # Are Defender cmdlets available? (They aren't on machines where Defender
-    # has been replaced by a 3rd-party AV like CrowdStrike or Sophos.)
-    if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
-        Write-ScanLog "Defender cmdlets not available - is Microsoft Defender installed and enabled?" 'Yellow'
-        Write-ScanLog "If a 3rd-party AV is managing protection, skipping scan." 'DarkYellow'
-    } else {
-        try {
-            # 1. Update signatures first
-            Write-ScanLog "Updating Defender signatures..." 'DarkGray'
-            try {
-                Update-MpSignature -ErrorAction Stop
-                Write-ScanLog "Signatures updated." 'DarkGray'
-            } catch {
-                Write-ScanLog "Signature update failed (continuing with current sigs): $($_.Exception.Message)" 'DarkYellow'
-            }
-
-            # 2. Capture start time so we can identify NEW threats afterwards
-            $scanStart = Get-Date
-            Write-ScanLog "Starting $scanType scan at $($scanStart.ToString('HH:mm:ss'))..." 'DarkGray'
-            $estDuration = if ($scanType -eq 'Quick') { '3-5 minutes' } else { '30 min to 4 hours' }
-            Write-ScanLog "Estimated duration: $estDuration." 'DarkGray'
-
-            # 3. Kick off as a background job so we can poll status
-            $mpScanType = "${scanType}Scan"  # 'QuickScan' or 'FullScan' - what Start-MpScan expects
-            $scanJob = Start-Job -Name "iDezign-${scanType}Scan" -ScriptBlock {
-                param($type)
-                Start-MpScan -ScanType $type -ErrorAction Stop
-            } -ArgumentList $mpScanType
-
-            # 4. Poll loop with progress every 60 sec (quick scan may finish in
-            # the first sleep cycle - that's fine, loop exits cleanly)
-            $pollSec = 60
-            while ($scanJob.State -eq 'Running') {
-                Start-Sleep -Seconds $pollSec
-                $elapsed = (Get-Date) - $scanStart
-                $elapsedStr = '{0:hh\:mm\:ss}' -f $elapsed
-                Write-ScanLog "  Scan still running... elapsed: $elapsedStr" 'DarkGray'
-            }
-
-            # 5. Collect results
-            $scanError = $null
-            try {
-                $null = Receive-Job -Job $scanJob -ErrorAction Stop
-            } catch {
-                $scanError = $_.Exception.Message
-            }
-            Remove-Job -Job $scanJob -Force -ErrorAction SilentlyContinue
-
-            $totalElapsed = (Get-Date) - $scanStart
-            $totalStr = '{0:hh\:mm\:ss}' -f $totalElapsed
-
-            if ($scanError) {
-                Write-ScanLog "Scan job ended with error: $scanError" 'Red'
-            } else {
-                Write-ScanLog "Scan completed in $totalStr." 'Green'
-            }
-
-            # 6. Check for threats detected during this scan window
-            try {
-                $allThreats = Get-MpThreatDetection -ErrorAction Stop
-                $newThreats = $allThreats | Where-Object { $_.InitialDetectionTime -ge $scanStart }
-                if ($newThreats) {
-                    Write-ScanLog "" 'Red'
-                    Write-ScanLog "*** $($newThreats.Count) THREAT(S) DETECTED during scan ***" 'Red'
-                    foreach ($t in $newThreats) {
-                        $tName = try { (Get-MpThreat -ThreatID $t.ThreatID -ErrorAction Stop).ThreatName } catch { "ID $($t.ThreatID)" }
-                        Write-ScanLog "  - $tName" 'Red'
-                        Write-ScanLog "    Resources: $($t.Resources -join '; ')" 'Red'
-                    }
-                    Write-ScanLog "Review in Windows Security -> Virus & threat protection -> Protection history." 'Yellow'
-                } else {
-                    Write-ScanLog "No threats detected." 'Green'
-                }
-            } catch {
-                Write-ScanLog "Could not query threat history: $($_.Exception.Message)" 'DarkYellow'
-            }
-
-            Write-Host "  Full scan log saved to: $scanLogFile" -ForegroundColor Cyan
-        } catch {
-            Write-ScanLog "ERROR during scan phase: $($_.Exception.Message)" 'Red'
-        }
-    }
-} else {
-    Write-Host "`n[Phase 1i] Defender scan: SKIPPED." -ForegroundColor DarkGray
-}
+# --- 1i. Microsoft Defender scan: MOVED in v3.5 ---
+# The Quick/Full/Skip Defender scan is now its own standalone menu tool:
+# iDezign_VirusScan.ps1 (same choices, same background-job + 60s-poll
+# engine, same threat report + timestamped log). Run it from the Toolkit
+# menu any time - no need to drag a full Cleanup along for a scan.
+Write-Host "`n[Phase 1i] Defender scan: moved to the 'Virus Scan' menu tool (v3.5)." -ForegroundColor DarkGray
 
 # --- 1j. Defender exclusions for Dentrix/SQL ---
 # Adds path and process exclusions to Microsoft Defender so it doesn't

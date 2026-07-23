@@ -14,7 +14,7 @@
 #  Version: 2026.05.25-gui-v3-webdesign
 # ============================================================================
 
-$ScriptVersion = '2026.07.03-gui-v2.9.3-hide-console'
+$ScriptVersion = '2026.07.03-gui-v2.9.4-virusscan-row'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -108,9 +108,10 @@ $DefaultToolDefs = @(
     [PSCustomObject]@{ key='Remediation'; displayName='Remediation';   subtitle='Interactive fixer + optional combined PDF'; icon=([char]::ConvertFromUtf32(0x1F527)); scriptFile='iDezign_Remediation.ps1';       destructive=$false; order=3 }
     [PSCustomObject]@{ key='Migrate';     displayName='Migrate';       subtitle='Back up + move user data';                  icon=([char]::ConvertFromUtf32(0x1FABF)); scriptFile='iDezign_Migration_Utility.ps1'; destructive=$false; order=4 }
     [PSCustomObject]@{ key='DISM';        displayName='DISM';          subtitle='Component store + system file repair';      icon=([char]::ConvertFromUtf32(0x1FA7A)); scriptFile='iDezign_DISM.ps1';              destructive=$false; order=5 }
-    [PSCustomObject]@{ key='SyncDrives';  displayName='Sync Drives';   subtitle='Safe two-way folder sync (trash-backed)';   icon=([char]::ConvertFromUtf32(0x1F504)); scriptFile='iDezign_SyncDrives.ps1';        destructive=$false; order=6 }
-    [PSCustomObject]@{ key='Duplicate';   displayName='Duplicate';     subtitle='One-way copy between any two locations';    icon=([char]::ConvertFromUtf32(0x1F4CB)); scriptFile='iDezign_Duplicate.ps1';         destructive=$false; order=7 }
-    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=8 }
+    [PSCustomObject]@{ key='VirusScan';   displayName='Virus Scan';    subtitle='Defender quick/full scan + threat log';     icon=([char]::ConvertFromUtf32(0x1F9A0)); scriptFile='iDezign_VirusScan.ps1';         destructive=$false; order=6 }
+    [PSCustomObject]@{ key='SyncDrives';  displayName='Sync Drives';   subtitle='Safe two-way folder sync (trash-backed)';   icon=([char]::ConvertFromUtf32(0x1F504)); scriptFile='iDezign_SyncDrives.ps1';        destructive=$false; order=7 }
+    [PSCustomObject]@{ key='Duplicate';   displayName='Duplicate';     subtitle='One-way copy between any two locations';    icon=([char]::ConvertFromUtf32(0x1F4CB)); scriptFile='iDezign_Duplicate.ps1';         destructive=$false; order=8 }
+    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=9 }
 )
 $ToolDefs = $null
 $ToolkitVersion = '2.0'
