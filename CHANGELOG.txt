@@ -4,6 +4,99 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.7 - 2026-10-25 - Six-month refresh: data-safety bug fixes + Windows 11 26H2 adaptations
+  (v3.6 was folded into this release.) Every script touched; every version
+  string bumped. Highlights, worst-first:
+  * DATA SAFETY
+    - Migrate restore: choosing "Skip" for a folder OVERWROTE it. PowerShell's
+      switch is a loop construct, so 'continue' only exited the switch and
+      fell through to robocopy. Fixed (migrate-v2.2).
+    - Duplicate: crashed on a drive-root destination (E:\ -> F:\); Mirror now
+      refuses source-inside-destination, runs a /MIR /L pre-pass, prints how
+      many files it WOULD delete, and requires typing MIRROR when that is
+      non-zero or the destination is a drive root. /TEE restored so the
+      console shows progress; dry-run can preview Mirror; pause before exit.
+    - Sync Drives: an unreadable subtree / >260-char path / junction on one
+      drive was read as "deleted" and the good copy trashed. Enumeration
+      errors now abort the run; reparse points skipped; a sanity gate stops
+      runs that would trash >25% of tracked files; state is keyed to both
+      volume serials and written to both drives (old serial-less state files
+      are treated as a safe first run once).
+    - Reset to OOBE: pre-flight BitLocker/Device Encryption check (default-on
+      since 24H2) with decrypt-and-wait or abort BEFORE anything destructive.
+  * CLEANUP (v3.7-resume-fix-26h2)
+    - Resume-after-reboot rebuilt: task runs as the interactive admin (was
+      SYSTEM in session 0 = invisible console + wrong profile), RunOnce only
+      as fallback (both fired before), always points at the staged C:\ copy
+      (USB path vanished after reboot), $CurrentUser restored from state so
+      Phase 4 renames the right account, missing state.json seeds a default
+      object instead of null-deref'ing into a reboot loop.
+    - Native cleanup: Test-Path -LiteralPath never matched the 13 wildcard
+      targets, so most of Phase 2 silently did nothing since v2.x. Fixed;
+      per-path before/after counts replace the unconditional "cleaned".
+    - Firewall: Set-NetFirewallRule -Profile REWROTE rule profiles (stripped
+      Domain). Now Get-/Enable-NetFirewallRule filtered by profile.
+    - Teams: work/school MSTeams was removed unconditionally despite the
+      opt-in; now only consumer Teams, only when asked.
+    - Windows Update: -UpdateType Software -NotCategory Upgrades (PSWindows
+      Update #76: OEM driver metadata throws "Value does not fall within the
+      expected range" and kills the scan; feature upgrades blew the 60-min
+      budget). Separate best-effort driver pass. Failed updates now reported
+      yellow instead of green; timeout waits for TiWorker before moving on.
+    - Static-IP DHCP reset skipped when a remote session (RDP/TeamViewer/
+      AnyDesk/ScreenConnect) is detected; static config saved to a file.
+    - 26H2 policies: Windows settings backup OFF explicitly (26H2 flips it on
+      for commercial devices), Recall/Click-to-Do/Settings-agent off, Copilot
+      app removed (TurnOffWindowsCopilot is deprecated), new Outlook removed +
+      blocked, Start recommendations/personalized sites/recently-added hidden.
+    - Defender exclusions: + sqlagent.exe, SQLDumper.exe, SQL DATA/Backup/Log
+      paths; verified after adding; warns when Tamper Protection blocks them.
+    - Claude Desktop via winget Anthropic.Claude first (MSIX redirect as
+      fallback); VirtualMachinePlatform enabled in Preflight so its pending
+      reboot no longer forces DISM to skip /resetbase. Open-Shell falls back
+      to winget if Ninite's build does not land. Timeouts on OneDriveSetup,
+      Teams msiexec, takeown/icacls; per-machine OneDrive path covered;
+      event-log clearing 10x faster; quser parsing replaced by profile.Loaded.
+  * DIAGNOSTICS (v3.7-honest-verdicts) - stop crying wolf
+    - Services CRITICAL only when stopped AND Automatic AND not trigger-start
+      (wuauserv/WinDefend idle by design); threat history limited to 30 days,
+      CRITICAL only for ACTIVE threats; third-party AV detected via
+      SecurityCenter2 ("AV: Malwarebytes (active), Defender passive"), no more
+      "Defender OFF" on protected machines.
+    - Now truly read-only: Dell section scans only (no silent DCU install, no
+      /applyUpdates, no prompt). -Unattended / -NoOpen switches for scheduled
+      runs. Per-user checks target the console user's hive, not the elevating
+      admin's. REPAIR account: active/disabled + password age (WARN >180 d).
+      New Windows Update section (last success date + pending count).
+      Executive block at the top of the report; module function list removed
+      from it. System.Web loaded before first HtmlEncode (PS7-safe).
+  * REMEDIATION (v3.7-real-fixes)
+    - Do-EnableDefender now actually re-enables (policy keys, service,
+      re-verify AntivirusEnabled) and bails honestly under Tamper Protection.
+      chkdsk no longer "Confirmed: scheduled" on "C: is not dirty". Edge PDF:
+      3-min timeout, no header/footer junk, own profile dir, size-verified.
+      New handlers: hibernation off, Public->Private network, REPAIR missing.
+  * COMMON (v3.7-args-quoting): Start-ProcessWithTimeout quotes args with
+    spaces (same bug class as the v3.4.1 robocopy fix); optional -StdOutFile;
+    TLS 1.2 added without disabling 1.3; new Get-iDezignEssentialServices and
+    Get-iDezignConsoleUserSid shared by Diagnostics + Remediation.
+  * LAUNCHER / SITE / CI
+    - GUI v3.0: REAL update check against the published manifest (the site's
+      "Auto-update check" badge was aspirational until now); footer turns
+      crimson "Update available: vX - click to download". Header no longer
+      claims v2.0 when the manifest is missing.
+    - .bat: apostrophe in a username (O'Brien) no longer breaks elevation.
+    - DISM tool: SFC result was always "unknown" (UTF-16 output) - fixed.
+      Desktop log paths honor OneDrive Known Folder Move (DISM, Virus Scan).
+    - Build: NSIS exe gets version resource; stale files removed on upgrade;
+      dev files (_debug_inspect.ps1, DEBUG-RunToolkit.bat, gui_startup.log,
+      retired iDezign_SavePDF.ps1) no longer ship in the zip/exe; CHANGELOG
+      entry and ASCII/PS7-syntax guards enforced; jsDelivr purge verified.
+      URL checker falls back HEAD->GET (Claude 405, Ninite 0-byte). Weekly
+      audit now checks release health instead of duplicating the URL check.
+      Site fallback list/badge refreshed; download links use
+      /releases/latest/download so they never rot again.
+
 v3.5 - 2026-07-03 - Virus Scan is its own tool; Cleanup gets fewer prompts + MWB install
   * NEW tool: iDezign_VirusScan.ps1 (menu #6, icon microbe) - the Defender
     Quick/Full/Skip scan that used to be Cleanup Phase 1i, unchanged:
