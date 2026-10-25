@@ -62,15 +62,6 @@ transition:all .35s var(--ease);
 }
 .nav .cta:hover{background:var(--ink);color:#fff;border-color:var(--ink)}
 .nav .cta::after{display:none}
-.nav-right{display:flex;align-items:center;gap:32px}
-.phone{
-display:inline-flex;align-items:center;gap:8px;
-font-size:14px;letter-spacing:.02em;color:var(--red);
-font-weight:400;white-space:nowrap;
-transition:color .3s var(--ease);
-}
-.phone:hover{color:var(--red-deep)}
-.phone svg{display:block;flex-shrink:0}
 
 /* page hero */
 .phero{position:relative;padding:108px 0 56px;overflow:hidden}
@@ -170,8 +161,6 @@ footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wra
 @media(max-width:780px){
 .wrap{padding:0 24px}
 .nav nav{display:none}
-.nav-right{gap:0}
-.phone{font-size:13px}
 .tgrid{grid-template-columns:1fr;gap:28px}
 .phero{padding:64px 0 36px}
 .phero .caretghost{font-size:280px;right:-30px;opacity:.04}
@@ -184,11 +173,6 @@ footer .top{flex-direction:column}
 <header>
 <div class="wrap nav">
 <a href="/"><img class="logo" src="/logos/iDezign-ai-logo-v2-transparent.png" alt="iDezign.ai — Technology to the Power of AI"></a>
-<div class="nav-right">
-<a class="phone" href="tel:+15304106450" aria-label="Call iDezign at +1 530 410 6450">
-<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
-+1&nbsp;530.410.6450
-</a>
 <nav>
 <a href="/#about">About</a>
 <a href="/#services">Services</a>
@@ -197,7 +181,6 @@ footer .top{flex-direction:column}
 <a href="/#contact">Contact</a>
 <a href="/#contact" class="cta">Start a conversation</a>
 </nav>
-</div>
 </div>
 </header>
 
@@ -220,26 +203,29 @@ footer .top{flex-direction:column}
 <div class="tick"></div>
 <div class="head">
 <h2>iDezign Toolkit</h2>
-<span class="badge ver">v2.9.2</span>
+<span class="badge ver">v3.7</span> <!-- v3.7: fallback badge synced to manifest -->
 </div>
 <p class="desc">A single launcher for the PowerShell tools I lean on for diagnostics, cleanup, and migrations. Each tool runs in its own elevated window — self-staging, so it works straight off a USB stick.</p>
 <div class="trust" style="display:flex;flex-wrap:wrap;gap:18px;margin:0 0 24px;font-size:13px;color:var(--muted);font-weight:300"><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> No install</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> Portable / USB</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> No telemetry</span><span style="display:inline-flex;align-items:center;gap:6px"><span style="color:var(--red);font-weight:500">✓</span> Auto-update check</span></div>
+<!-- v3.7: static fallback synced to the 9-tool manifest (Save PDF retired; Virus Scan + Duplicate added; icons/subtitles match iDezign_Versions.json). The JS below overrides this from the live manifest. -->
 <ul class="feats">
-<li><span class="k">🔍</span><span class="t"><b>Diagnostics</b> &nbsp;<span>— health check + HTML report</span></span></li>
-<li><span class="k">📄</span><span class="t"><b>Save PDF</b> &nbsp;<span>— latest report to a dated PDF</span></span></li>
-<li><span class="k">🧹</span><span class="t"><b>Cleanup</b> &nbsp;<span>— maintenance + imaging prep</span></span></li>
-<li><span class="k">🔧</span><span class="t"><b>Remediation</b> &nbsp;<span>— interactive issue fixer</span></span></li>
-<li><span class="k">📦</span><span class="t"><b>Migrate</b> &nbsp;<span>— back up + move user data</span></span></li>
-<li><span class="k">🩺</span><span class="t"><b>DISM</b> &nbsp;<span>— component store + SFC repair</span></span></li>
-<li><span class="k">🔄</span><span class="t"><b>Sync Drives</b> &nbsp;<span>— two-way folder sync, trash-safe</span></span></li>
-<li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span> &nbsp;<span>— sysprep for imaging</span></span></li>
+<li><span class="k">🔍</span><span class="t"><b>Diagnostics</b> &nbsp;<span>— Health check + HTML report</span></span></li>
+<li><span class="k">🧹</span><span class="t"><b>Cleanup</b> &nbsp;<span>— Maintenance + imaging prep</span></span></li>
+<li><span class="k">🔧</span><span class="t"><b>Remediation</b> &nbsp;<span>— Interactive fixer + optional combined PDF</span></span></li>
+<li><span class="k">🪿</span><span class="t"><b>Migrate</b> &nbsp;<span>— Back up + move user data</span></span></li>
+<li><span class="k">🩺</span><span class="t"><b>DISM</b> &nbsp;<span>— Component store + system file repair</span></span></li>
+<li><span class="k">🦠</span><span class="t"><b>Virus Scan</b> &nbsp;<span>— Defender quick/full scan + threat log</span></span></li>
+<li><span class="k">🔄</span><span class="t"><b>Sync Drives</b> &nbsp;<span>— Safe two-way folder sync (trash-backed)</span></span></li>
+<li><span class="k">📋</span><span class="t"><b>Duplicate</b> &nbsp;<span>— One-way copy between any two locations</span></span></li>
+<li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span> &nbsp;<span>— Sysprep for imaging (destructive)</span></span></li>
 </ul>
 <div class="foot">
-<a id="dlExe" href="https://github.com/idezigntech/idezign-site/releases/download/v3.2.2/iDezign-Toolkit.exe" class="btn-primary">Download .exe &nbsp;↓</a>
+<!-- v3.7: fallback hrefs use /releases/latest/download/ (GitHub redirects to the newest release asset, so the static page can never point at a tag that does not exist). JS rewrites to the versioned URL for SmartScreen reputation. -->
+<a id="dlExe" href="https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.exe" class="btn-primary">Download .exe &nbsp;↓</a>
 <span class="meta">Windows · One-click · ~270&nbsp;KB</span>
 </div>
 <p style="margin-top:14px;font-size:13px;color:var(--muted);font-weight:300;line-height:1.5">
-Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/download/v3.2.2/iDezign-Toolkit.zip" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — best if Windows Defender flags the .exe as PUA on first download). Both are the same content; the .zip is friendlier to reputation-strict antivirus.
+Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.zip" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — best if Windows Defender flags the .exe as PUA on first download). Both are the same content; the .zip is friendlier to reputation-strict antivirus.
 </p>
 </div>
 
@@ -408,7 +394,7 @@ Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/down
 <div class="col">
 <h4>Contact</h4>
 <a href="mailto:eric@idezign.com">eric@idezign.com</a>
-<a href="tel:+15304106450">+1&nbsp;530.410.6450</a>
+<a href="tel:5304106450">530&nbsp;410&nbsp;6450</a>
 </div>
 <div class="col">
 <h4>Explore</h4>
@@ -443,11 +429,15 @@ fetch(BASE + "iDezign_Versions.json?t=" + t, {cache:"no-store"})
 .then(function(r){return r.ok?r.json():null})
 .then(function(mf){
 if(!mf)return;
-// Rewrite download links to the versioned GitHub Release URL for the
-// current toolkitVersion. Versioned URLs are IMMUTABLE (same hash forever),
-// so every download builds SmartScreen reputation for that specific hash.
-// The HTML fallback URLs already point at v3.2.2 - this just keeps them
-// current on future releases without manual site edits.
+// v3.7: Download URL wiring. The static HTML hrefs point at
+// /releases/latest/download/... (GitHub 302s to the newest release asset,
+// so the fallback can never 404 on a missing tag). Once the manifest
+// loads we rewrite to the VERSIONED /releases/download/v<ver>/ URL: a
+// stable per-version URL builds SmartScreen reputation faster than the
+// moving /latest redirect. The old api.github.com "find the latest tag"
+// round-trip (rate-limited, 60/hr/IP) is gone - the /latest redirect
+// covers the fallback case and the build/weekly-audit workflows now
+// fail loudly if the manifest version has no matching release.
 if(mf.toolkitVersion){
   var relBase = "https://github.com/idezigntech/idezign-site/releases/download/v"+mf.toolkitVersion+"/";
   var dlExe = document.getElementById("dlExe");
