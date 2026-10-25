@@ -11,10 +11,12 @@
 #     model - required for tools that self-stage and reboot, like Cleanup)
 #   * Double-click the header to maximize/restore; drag the header to move
 #
-#  Version: 2026.05.25-gui-v3-webdesign
+#  Version: 2026.10.25-gui-v3.0-update-check
 # ============================================================================
 
-$ScriptVersion = '2026.07.03-gui-v2.9.4-virusscan-row'
+# v3.7: GUI v3.0 - real update check against the published manifest (see the
+# "Update check" block near the end of the file).
+$ScriptVersion = '2026.10.25-gui-v3.0-update-check'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -38,7 +40,7 @@ trap {
 Add-Type -AssemblyName PresentationFramework -ErrorAction SilentlyContinue
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')) {
     [System.Windows.MessageBox]::Show(
-        "iDezign Toolkit must be run as Administrator.`r`n`r`nClose this and launch via Run-Toolkit-GUI.bat instead, which will prompt for elevation.",
+        "iDezign Toolkit must be run as Administrator.`r`n`r`nClose this and launch via 'iDezign TOOLKIT.bat' instead, which will prompt for elevation.",   # v3.7: correct launcher name
         "iDezign Toolkit - Admin required",
         [System.Windows.MessageBoxButton]::OK,
         [System.Windows.MessageBoxImage]::Warning) | Out-Null
@@ -114,7 +116,9 @@ $DefaultToolDefs = @(
     [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=9 }
 )
 $ToolDefs = $null
-$ToolkitVersion = '2.0'
+# v3.7: default was '2.0', which painted a bogus "TOOLKIT v2.0" header whenever
+# the manifest was missing/unparseable. 'unknown' -> header says "(no manifest)".
+$ToolkitVersion = 'unknown'
 try {
     if (Test-Path $ManifestPath) {
         $mf = Get-Content -Raw -Encoding UTF8 $ManifestPath | ConvertFrom-Json -ErrorAction Stop
@@ -305,7 +309,12 @@ $ui = @{
 }
 
 # Toolkit version label
-$ui.Toolkit.Text = ("T O O L K I T   v{0}" -f $ToolkitVersion)
+# v3.7: no manifest -> say so instead of inventing a version number.
+if ($ToolkitVersion -eq 'unknown') {
+    $ui.Toolkit.Text = "T O O L K I T   (no manifest)"
+} else {
+    $ui.Toolkit.Text = ("T O O L K I T   v{0}" -f $ToolkitVersion)
+}
 
 # Logo
 if ($LogoPath -and (Test-Path $LogoPath)) {
@@ -510,7 +519,124 @@ try {
     $window.ShowInTaskbar = $true
 } catch { }
 
-Set-Status ("Ready - {0} scripts loaded." -f $ToolDefs.Count)
+$ReadyText = ("Ready - {0} scripts loaded." -f $ToolDefs.Count)
+Set-Status $ReadyText
+
+# --- Update check (v3.7 / GUI v3.0) ------------------------------------------
+# Fetches the PUBLISHED manifest from jsDelivr on a background runspace and
+# compares its toolkitVersion to the local one. A DispatcherTimer polls the
+# runspace for completion from the UI thread, so the UI never blocks and no
+# WPF object is ever touched cross-thread. Any failure = silent no-op (the
+# footer keeps saying "Ready"); outcomes are logged via Write-Diag.
+$script:UpdateManifestUrl = 'https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/iDezign_Versions.json'
+$script:UpdateDownloadUrl = 'https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.exe'
+$script:UpdateAvailable   = $false
+
+function Compare-ToolkitVersion {
+    # Returns  1 if $Remote is newer, 0 if equal, -1 if $Local is newer.
+    # [version] needs at least 2 parts, so a bare "4" becomes "4.0"; 2- and
+    # 3-part strings cast directly. Anything uncastable falls back to an
+    # ordinal string compare so we still return SOMETHING sensible.
+    param([string]$Remote, [string]$Local)
+    $rv = $null; $lv = $null
+    try {
+        $r = $Remote.Trim(); if ($r -notmatch '\.') { $r = $r + '.0' }
+        $l = $Local.Trim();  if ($l -notmatch '\.') { $l = $l + '.0' }
+        $rv = [version]$r
+        $lv = [version]$l
+    } catch { $rv = $null; $lv = $null }
+    if ($rv -and $lv) { return $rv.CompareTo($lv) }
+    return [string]::CompareOrdinal($Remote, $Local)
+}
+
+# Footer click: only acts when an update was flagged (handler is wired once).
+$status_Click = {
+    param($sender, $e)
+    if (-not $script:UpdateAvailable) { return }
+    try {
+        Start-Process $script:UpdateDownloadUrl | Out-Null
+        Write-Diag ("update: opened download {0}" -f $script:UpdateDownloadUrl)
+    } catch {
+        Write-Diag ("update: open download failed: {0}" -f $_.Exception.Message)
+    }
+}
+$ui.Status.add_MouseLeftButtonUp($status_Click)
+
+$script:UpdatePS     = $null
+$script:UpdateHandle = $null
+$script:UpdateTimer  = $null
+$script:UpdateStart  = Get-Date
+try {
+    if ($ToolkitVersion -eq 'unknown') { throw 'no local manifest - skipping update check' }
+
+    $updateScript = {
+        param([string]$Url)
+        try {
+            # PS 5.1 on older .NET may not offer TLS 1.2 by default; GitHub/jsDelivr require it.
+            try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            $json = $resp.Content | ConvertFrom-Json -ErrorAction Stop
+            if ($json.toolkitVersion) { return [string]$json.toolkitVersion }
+            return $null
+        } catch {
+            return ('ERR:' + $_.Exception.Message)
+        }
+    }
+    $script:UpdatePS = [PowerShell]::Create()
+    [void]$script:UpdatePS.AddScript($updateScript.ToString()).AddArgument($script:UpdateManifestUrl)
+    $script:UpdateHandle = $script:UpdatePS.BeginInvoke()
+
+    $script:UpdateTimer = New-Object System.Windows.Threading.DispatcherTimer
+    $script:UpdateTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+    $script:UpdateTimer.add_Tick({
+        try {
+            $elapsed = ((Get-Date) - $script:UpdateStart).TotalSeconds
+            if (-not $script:UpdateHandle.IsCompleted) {
+                if ($elapsed -gt 20) {
+                    $script:UpdateTimer.Stop()
+                    Write-Diag 'update: timed out waiting for manifest fetch (ignored)'
+                    try { $script:UpdatePS.Stop(); $script:UpdatePS.Dispose() } catch { }
+                }
+                return
+            }
+            $script:UpdateTimer.Stop()
+            $out = $null
+            try { $out = $script:UpdatePS.EndInvoke($script:UpdateHandle) } catch { }
+            try { $script:UpdatePS.Dispose() } catch { }
+            $remote = $null
+            if ($out -and $out.Count -gt 0) { $remote = [string]$out[0] }
+            if (-not $remote) {
+                Write-Diag 'update: no toolkitVersion in remote manifest (ignored)'
+                return
+            }
+            if ($remote.StartsWith('ERR:')) {
+                Write-Diag ("update: fetch failed (ignored): {0}" -f $remote.Substring(4))
+                return
+            }
+            $cmp = Compare-ToolkitVersion -Remote $remote -Local $ToolkitVersion
+            if ($cmp -gt 0) {
+                $script:UpdateAvailable = $true
+                Set-Status ("Update available: v{0} - click to download" -f $remote) '#A82828'
+                try { $ui.Status.Cursor = [System.Windows.Input.Cursors]::Hand } catch { }
+                try { $ui.Status.ToolTip = $script:UpdateDownloadUrl } catch { }
+                Write-Diag ("update: AVAILABLE remote v{0} > local v{1}" -f $remote, $ToolkitVersion)
+            } elseif ($cmp -lt 0) {
+                Set-Status ("Ready - {0} scripts loaded (dev build v{1} newer than published v{2})" -f $ToolDefs.Count, $ToolkitVersion, $remote)
+                Write-Diag ("update: local v{0} is NEWER than published v{1} (dev build)" -f $ToolkitVersion, $remote)
+            } else {
+                Write-Diag ("update: up to date (v{0})" -f $ToolkitVersion)
+            }
+        } catch {
+            try { $script:UpdateTimer.Stop() } catch { }
+            Write-Diag ("update: tick error (ignored): {0}" -f $_.Exception.Message)
+        }
+    })
+    $script:UpdateTimer.Start()   # ticks once the dispatcher loop runs, i.e. after the window is shown
+    Write-Diag 'CP: update check started'
+} catch {
+    Write-Diag ("update: not started: {0}" -f $_.Exception.Message)
+}
+
 Write-Diag 'CP: about to present window'
 try {
     if (-not [System.Windows.Application]::Current) {

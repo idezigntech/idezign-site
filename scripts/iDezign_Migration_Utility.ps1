@@ -53,7 +53,7 @@ param(
     [string]$RestoreAction = 'Prompt'
 )
 
-$ScriptVersion = '2026.07.03-v3.4.1-migrate-space-safe'
+$ScriptVersion = '2026.10.25-migrate-v2.2-skip-fix'
 $ErrorActionPreference = 'Continue'
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -334,19 +334,43 @@ if ($Mode -eq 'Backup') {
     Write-Host "`nBackup root: $BackupRoot" -ForegroundColor Cyan
     Write-Host "(Source data is COPIED only - nothing on this PC is deleted, moved, or renamed.)`n" -ForegroundColor DarkGray
 
+    # v3.7: OneDrive Known Folder Move detection. When Desktop/Documents/
+    # Pictures live under ...\OneDrive\..., some files are "online-only"
+    # cloud placeholders (attribute O). Robocopy would hydrate every one of
+    # them from the cloud (slow, and can blow the destination's free space)
+    # or fail on them. Offer to skip them - signing into OneDrive on the new
+    # PC brings them back automatically.
+    $kfmPaths = @($desktop, $downloads, $documents, $pictures) | Where-Object { $_ -and ($_ -like '*\OneDrive*') }
+    if ($kfmPaths.Count -gt 0 -and -not $SkipOnlineOnly) {
+        Write-Host ""
+        Write-Host "  NOTICE: OneDrive Known Folder Move is active - these folders live inside OneDrive:" -ForegroundColor Yellow
+        foreach ($k in $kfmPaths) { Write-Host "    $k" -ForegroundColor Yellow }
+        Write-Host "  Online-only (cloud placeholder) files would be downloaded from the cloud during the copy." -ForegroundColor DarkGray
+        Write-Host "  Signing into OneDrive on the new PC restores them automatically, so skipping is usually safe." -ForegroundColor DarkGray
+        $kfmAns = (Read-Host "  Skip online-only (cloud placeholder) files? (Y/N) [Enter = Y]").Trim()
+        if ([string]::IsNullOrWhiteSpace($kfmAns) -or $kfmAns -match '^(y|yes)$') {
+            $SkipOnlineOnly = $true
+            Write-Host "  Online-only files will be skipped (/XA:O). Sign into OneDrive on the new PC to get them back." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Online-only files will be downloaded and copied (this can take a long time)." -ForegroundColor DarkGray
+        }
+        Write-Host ""
+    }
     $online = @(); if ($SkipOnlineOnly) { $online = @('/XA:O') }
 
-    Write-Host "[1/5] Desktop" -ForegroundColor Green
+    # v3.7: all step labels share one total (6 = 4 folders + Chrome + Edge).
+    # The old labels went [1/5]..[5/5] then jumped to [6/6].
+    Write-Host "[1/6] Desktop" -ForegroundColor Green
     Invoke-Robocopy -Source $desktop -Dest (Join-Path $BackupRoot 'Desktop') `
         -ExtraArgs (@('/XD', $BackupRoot, (Join-Path $desktop 'Backup_*'), '$RECYCLE.BIN', 'System Volume Information') + $online)
-    Write-Host "[2/5] Downloads" -ForegroundColor Green
+    Write-Host "[2/6] Downloads" -ForegroundColor Green
     Invoke-Robocopy -Source $downloads -Dest (Join-Path $BackupRoot 'Downloads') -ExtraArgs $online
-    Write-Host "[3/5] Documents" -ForegroundColor Green
+    Write-Host "[3/6] Documents" -ForegroundColor Green
     Invoke-Robocopy -Source $documents -Dest (Join-Path $BackupRoot 'Documents') -ExtraArgs $online
-    Write-Host "[4/5] Pictures" -ForegroundColor Green
+    Write-Host "[4/6] Pictures" -ForegroundColor Green
     Invoke-Robocopy -Source $pictures -Dest (Join-Path $BackupRoot 'Pictures') -ExtraArgs $online
 
-    Write-Host "[5/5] Google Chrome" -ForegroundColor Green
+    Write-Host "[5/6] Google Chrome" -ForegroundColor Green
     $googleDir = Join-Path $BackupRoot 'Google Backup'; $null = New-Item -ItemType Directory -Path $googleDir -Force
     $userData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
     if (Test-Path -LiteralPath $userData) {
@@ -411,7 +435,10 @@ if ($Mode -eq 'Backup') {
         Write-Host "`n[6/6] Microsoft Edge - SKIPPED (-SkipEdge)" -ForegroundColor DarkGray
     }
 
-    if (-not $SkipEdge -and $BrowserProfileDepth -ne 'Bookmarks' -and (Test-Path -LiteralPath $userData)) {
+    # v3.7: -SkipEdge only affects Edge. This Chrome Settings/Full snapshot
+    # was wrongly gated on it, so -SkipEdge silently downgraded Chrome to
+    # bookmarks-only.
+    if ($BrowserProfileDepth -ne 'Bookmarks' -and (Test-Path -LiteralPath $userData)) {
         Get-ChildItem -LiteralPath $userData -Directory |
             Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' } |
             ForEach-Object {
@@ -519,10 +546,15 @@ if ($Mode -eq 'Restore') {
         }
 
         $action = Get-RestoreActionForFolder -Name $m.Name -Dst $m.Dst -Mode $RestoreAction
+        # v3.7: the Skip branch used to call `continue` inside the switch.
+        # In PowerShell `switch` is itself a loop construct, so `continue`
+        # only left the switch and fell straight through to Invoke-Robocopy -
+        # the folder the tech said to SKIP got overwritten anyway. The copy
+        # is now explicitly gated on the action instead of relying on flow
+        # control inside the switch.
         switch ($action) {
             'Skip' {
                 Write-Host "  Skipped (existing files preserved)." -ForegroundColor DarkGray
-                continue
             }
             'Merge' {
                 $extra += @('/XC','/XN','/XO')
@@ -530,7 +562,9 @@ if ($Mode -eq 'Restore') {
             }
             default { }
         }
-        Invoke-Robocopy -Source $m.Src -Dest $m.Dst -ExtraArgs $extra
+        if ($action -ne 'Skip') {
+            Invoke-Robocopy -Source $m.Src -Dest $m.Dst -ExtraArgs $extra
+        }
     }
 
     Write-Host "`n[Google Chrome]" -ForegroundColor Green

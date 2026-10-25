@@ -39,7 +39,8 @@
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')) {
     Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
-    Write-Host "Use Run-Reset-to-OOBE.bat (it self-elevates)." -ForegroundColor Yellow
+    # v3.7: there is no Run-Reset-to-OOBE.bat - the Toolkit menu is the launcher.
+    Write-Host "Launch it from the iDezign Toolkit menu (which auto-elevates) or right-click -> Run as Administrator." -ForegroundColor Yellow
     Pause
     exit 1
 }
@@ -47,7 +48,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner.
-$ScriptVersion = '2026.05.18-staging-freshness'
+$ScriptVersion = '2026.10.25-reset-v1.1-bitlocker-check'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -251,6 +252,94 @@ if (Get-Command Test-PendingReboot -ErrorAction SilentlyContinue) {
         if ($cont -notmatch '^(y|yes)$') { exit 0 }
     } else {
         Write-Host "  No pending operations." -ForegroundColor DarkGray
+    }
+}
+
+#endregion
+
+#region --- Pre-flight: BitLocker / Device Encryption ------------------------
+# v3.7: sysprep /generalize refuses to run while the OS volume is encrypted
+# (or still decrypting). Windows 11 24H2+ turns Device Encryption ON by
+# default during OOBE on almost any modern laptop, so this now bites on most
+# client machines. Get-BitLockerVolume may be missing on Home SKUs without
+# the module - that's a try/catch, not a failure.
+
+Write-Host "  Checking BitLocker / Device Encryption on $env:SystemDrive..." -ForegroundColor DarkGray
+$blv = $null
+try {
+    if (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue) {
+        $blv = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
+    } else {
+        Write-Host "  BitLocker cmdlets not available on this edition - cannot check. If sysprep" -ForegroundColor DarkYellow
+        Write-Host "  fails with an encryption error, run 'manage-bde -off $env:SystemDrive' and wait." -ForegroundColor DarkYellow
+    }
+} catch {
+    Write-Host "  BitLocker check failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+}
+
+if ($blv) {
+    $blProt   = [string]$blv.ProtectionStatus
+    $blStatus = [string]$blv.VolumeStatus
+    Write-Host "  Protection: $blProt   Volume: $blStatus   Encrypted: $($blv.EncryptionPercentage)%" -ForegroundColor DarkGray
+
+    if ($blProt -eq 'On' -or $blStatus -ne 'FullyDecrypted') {
+        Write-Host ""
+        Write-Host "  STOP - $env:SystemDrive is BitLocker / Device Encryption protected." -ForegroundColor Red
+        Write-Host "  sysprep /generalize FAILS on an encrypted OS volume. Device Encryption is ON" -ForegroundColor Yellow
+        Write-Host "  by default on Windows 11 24H2 and later, so this is normal on newer machines." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  The volume must be fully decrypted first. Decryption runs in the background" -ForegroundColor Yellow
+        Write-Host "  and can take 20 minutes to a few hours depending on disk size." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  NOTE: the existing recovery key stays tied to the OLD owner's Microsoft/AAD" -ForegroundColor DarkYellow
+        Write-Host "  account. After OOBE the new owner gets a fresh key when encryption re-enables." -ForegroundColor DarkYellow
+        Write-Host ""
+        Write-Host "    (D) Decrypt now and wait for it to finish" -ForegroundColor White
+        Write-Host "    (A) Abort - do nothing" -ForegroundColor White
+        $blAns = (Read-Host "  Choose D or A").Trim().ToUpper()
+        if ($blAns -ne 'D') {
+            Write-Host "  Aborted - volume left as-is. Decrypt it (Settings > Privacy & security > Device" -ForegroundColor Yellow
+            Write-Host "  encryption, or 'manage-bde -off $env:SystemDrive') and re-run." -ForegroundColor Yellow
+            Pause
+            exit 0
+        }
+
+        try {
+            Write-Host "  Starting decryption (Disable-BitLocker -MountPoint $env:SystemDrive)..." -ForegroundColor Cyan
+            Disable-BitLocker -MountPoint $env:SystemDrive -ErrorAction Stop | Out-Null
+        } catch {
+            # Already decrypting is not an error - just fall through to the poll.
+            Write-Host "  Disable-BitLocker: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+
+        # Poll every 30s, cap at 4 hours. Percentage counts DOWN to 0 while
+        # decrypting; VolumeStatus flips to FullyDecrypted when done.
+        $blStart   = Get-Date
+        $blCapMin  = 240
+        $blDone    = $false
+        while (-not $blDone) {
+            Start-Sleep -Seconds 30
+            try {
+                $blNow = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop
+            } catch {
+                Write-Host "  (poll failed: $($_.Exception.Message))" -ForegroundColor DarkYellow
+                continue
+            }
+            $blElapsed = (Get-Date) - $blStart
+            Write-Host ("  ...decrypting  {0}% encrypted remaining   status: {1}   ({2:hh\:mm\:ss} elapsed)" -f $blNow.EncryptionPercentage, $blNow.VolumeStatus, $blElapsed) -ForegroundColor DarkGray
+            if ([string]$blNow.VolumeStatus -eq 'FullyDecrypted') { $blDone = $true; break }
+            if ($blElapsed.TotalMinutes -ge $blCapMin) {
+                Write-Host ""
+                Write-Host "  Decryption still not finished after $blCapMin minutes - giving up on waiting." -ForegroundColor Red
+                Write-Host "  Let it finish (check 'manage-bde -status $env:SystemDrive'), then re-run this script." -ForegroundColor Yellow
+                Pause
+                exit 1
+            }
+        }
+        Write-Host "  $env:SystemDrive is fully decrypted. Continuing." -ForegroundColor Green
+        Write-Host ""
+    } else {
+        Write-Host "  Not encrypted - OK for sysprep." -ForegroundColor DarkGray
     }
 }
 

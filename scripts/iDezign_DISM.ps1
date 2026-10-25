@@ -14,7 +14,7 @@
 #  Run as Administrator. Closes when done; no auto-reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.06.23-dism-v1.1'
+$ScriptVersion = '2026.10.25-dism-v1.2-sfc-encoding'
 
 #region --- Safety + module load -------------------------------------------
 
@@ -54,7 +54,10 @@ Write-Host ""
 
 #region --- Transcript -----------------------------------------------------
 
-$logDir  = "$env:USERPROFILE\Desktop"
+# v3.7: ask the shell where Desktop really is. With OneDrive Known Folder
+# Move it is %USERPROFILE%\OneDrive\Desktop, and the literal path is empty.
+$logDir  = [Environment]::GetFolderPath('Desktop')
+if ([string]::IsNullOrEmpty($logDir)) { $logDir = "$env:USERPROFILE\Desktop" }
 $logName = "iDezign_DISM_$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log"
 $logPath = Join-Path $logDir $logName
 
@@ -151,8 +154,21 @@ function Invoke-SfcScan {
     Write-Host ""
 
     $job = Start-Job -ScriptBlock {
-        $output = & sfc.exe /scannow 2>&1 | Out-String
-        return @{ ExitCode = $LASTEXITCODE; Output = $output }
+        # v3.7: sfc.exe writes UTF-16LE to a redirected stdout. A background
+        # job decodes it with the default OEM code page, so every other byte
+        # is a NUL and the text comes back as "d i d   n o t   f i n d".
+        # None of the ConvertTo-SfcStatus patterns matched and the summary
+        # always said 'unknown'. Tell the console to decode as Unicode for
+        # the duration of the call, then put it back.
+        $prevEnc = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+            $output = & sfc.exe /scannow 2>&1 | Out-String
+            $ec = $LASTEXITCODE
+        } finally {
+            [Console]::OutputEncoding = $prevEnc
+        }
+        return @{ ExitCode = $ec; Output = $output }
     }
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -189,6 +205,10 @@ function Invoke-SfcScan {
 function ConvertTo-SfcStatus {
     param([string] $Output)
     if (-not $Output) { return 'unknown' }
+    # v3.7: belt and suspenders with the encoding fix in Invoke-SfcScan - if
+    # the output still arrived as mis-decoded UTF-16, strip the NULs so the
+    # words are contiguous again and the patterns below can match.
+    $Output = $Output -replace "`0", ''
     if ($Output -match 'did not find any integrity violations')        { return 'clean' }
     if ($Output -match 'found corrupt files and successfully repaired'){ return 'repaired' }
     if ($Output -match 'found corrupt files but was unable to fix')    { return 'unfixable' }

@@ -4,6 +4,13 @@
 ::  Launches the iDezign Toolkit GUI, self-elevating via UAC on a normal
 ::  double-click.
 ::
+::  v2.9.3-bat changes (toolkit v3.7):
+::   1. The elevate line no longer pastes %GUI_SCRIPT% into a single-quoted
+::      PowerShell string. A username with an apostrophe (C:\Users\O'Brien\)
+::      terminated the string early and the relaunch silently died. The path
+::      is now read INSIDE PowerShell from the GUI_SCRIPT environment
+::      variable that this .bat already sets - no interpolation, no quoting.
+::
 ::  v2.9.2-bat changes (window suppression - pairs with GUI v2.9.3):
 ::   1. Self-minimize: on first launch the bat relaunches ITSELF minimized
 ::      and exits, so the console the user sees is a taskbar blip instead
@@ -47,7 +54,8 @@ goto :end
 :elevate
 :: Relaunch elevated, minimized (NOT hidden - see header). The GUI hides
 :: its own console once loaded, so the minimized window is a taskbar blip.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -Verb RunAs -WindowStyle Minimized -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','\"%GUI_SCRIPT%\"'"
+:: v2.9.3-bat: path comes from $env:GUI_SCRIPT (apostrophe-safe, see header).
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -Verb RunAs -WindowStyle Minimized -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('\"{0}\"' -f $env:GUI_SCRIPT))"
 goto :end
 
 :missing

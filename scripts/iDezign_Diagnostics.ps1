@@ -1,7 +1,11 @@
 # ============================================================================
 #  iDezign_Diagnostics.ps1
 #  Read-only health check for sick / suspect Windows machines.
-#  Run as Administrator. Makes NO changes to the system.
+#  Run as Administrator. Read-only (never installs or changes anything).
+# ============================================================================
+#  v3.7 switches:
+#    -Unattended   no Read-Host prompts anywhere (safe defaults chosen)
+#    -NoOpen       do not auto-open the HTML report in the browser
 # ============================================================================
 #  Outputs:
 #   * Text report  : C:\iDezign_Diagnostics\Diagnostics_Latest.txt
@@ -19,6 +23,7 @@
 #   2. Disk health           (SMART, free space, BitLocker)
 #   3. Memory & CPU pressure (live samples, top processes)
 #   4. Recent events         (event log errors, hotfixes, crashes)
+#   4b. Windows Update       (last successful install, pending count) [v3.7]
 #   5. Services              (stopped auto-start, non-Microsoft running)
 #   6. Network               (adapters, DNS, gateway, TCP probe, profiles, sharing)
 #   7. Security              (Defender, firewall, threats, exclusions, tasks)
@@ -31,15 +36,22 @@
 #  13. Server-specific checks (if Server OS detected, runs in addition)
 #  + Compare to last run     (if a prior snapshot exists)
 #
-#  This script is READ-ONLY. It does not modify the system in any way.
+#  This script is read-only (never installs or changes anything). The only
+#  files it writes are its own reports under C:\iDezign_Diagnostics.
 # ============================================================================
+
+# v3.7: switches for scripted / scheduled runs. Must be the first statement.
+param(
+    [switch]$Unattended,
+    [switch]$NoOpen
+)
 
 #region --- Safety + setup ---------------------------------------------------
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')) {
     Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
     Write-Host "Use Run-Diagnostics.bat (it self-elevates) or right-click -> Run with PowerShell as Admin." -ForegroundColor Yellow
-    Pause
+    if (-not $Unattended) { Pause }   # v3.7: never block a scheduled run
     exit 1
 }
 
@@ -47,7 +59,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped whenever the HTML report format changes.
 # Visible in the HTML report header so we can verify deployed version at a glance.
-$ScriptVersion = '2026.07.01-v3.1.1-tv-url'
+$ScriptVersion = '2026.10.25-v3.7-honest-verdicts'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -218,15 +230,16 @@ function Write-Section {
 
 #region --- Banner -----------------------------------------------------------
 
-Clear-Host
+if (-not $Unattended) { try { Clear-Host } catch { } }   # v3.7: no console to clear on a scheduled run
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host "  iDezign Diagnostics - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Cyan
 Write-Host "  Version: $ScriptVersion$(if(Get-Command Get-iDezignCommonVersion -EA SilentlyContinue){"  |  module: $(Get-iDezignCommonVersion)"})" -ForegroundColor DarkGray
 Write-Host "  Computer: $env:COMPUTERNAME   User: $env:USERNAME" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "  This is a READ-ONLY diagnostic. No changes will be made." -ForegroundColor DarkGray
+Write-Host "  This diagnostic is read-only (never installs or changes anything)." -ForegroundColor DarkGray
 Write-Host "  Expect ~30-60 seconds to complete." -ForegroundColor DarkGray
+if ($Unattended) { Write-Host "  Unattended mode: no prompts will be shown." -ForegroundColor DarkGray }
 Write-Host "============================================================" -ForegroundColor Cyan
 
 # Big yellow server banner if applicable. Diagnostics is read-only, so the
@@ -516,16 +529,28 @@ try {
     $usedPct = [math]::Round((($totalMB - $freeMB) / $totalMB) * 100, 1)
 
     # 5-second CPU average (3 samples, 2 sec apart)
-    $cpuSamples = Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 2 -MaxSamples 3 -ErrorAction Stop
-    $cpuAvg     = [math]::Round(($cpuSamples.CounterSamples.CookedValue | Measure-Object -Average).Average, 1)
+    # v3.7: Get-Counter gets its own try/catch. It fails on boxes with a
+    # corrupt perf-counter registry (lodctr /r territory) and that used to
+    # throw the WHOLE section away - including the RAM figures we already
+    # had in hand. Now a counter failure just reports CPU as n/a.
+    $cpuAvg = 'n/a'
+    $cpuCounterError = $null
+    try {
+        $cpuSamples = Get-Counter '\Processor(_Total)\% Processor Time' -SampleInterval 2 -MaxSamples 3 -ErrorAction Stop
+        $cpuAvg     = [math]::Round(($cpuSamples.CounterSamples.CookedValue | Measure-Object -Average).Average, 1)
+    } catch {
+        $cpuCounterError = $_.Exception.Message
+    }
 
     # Top processes
     $topMem = Get-Process | Sort-Object WS  -Descending | Select-Object -First 5 Name, Id, @{N='RAM_MB';E={[math]::Round($_.WS/1MB,0)}}
     $topCpu = Get-Process | Sort-Object CPU -Descending | Where-Object CPU -gt 0 | Select-Object -First 5 Name, Id, @{N='CPU_Total_Sec';E={[math]::Round($_.CPU,0)}}
 
+    $cpuLine = if ($cpuAvg -eq 'n/a') { "CPU avg   : n/a (perf counter unavailable$(if($cpuCounterError){": $cpuCounterError"}))" }
+               else                    { "CPU avg   : $cpuAvg% (5-sec sample)" }
     $details = @(
         "RAM       : $freeMB MB free / $totalMB MB total ($usedPct% used)"
-        "CPU avg   : $cpuAvg% (5-sec sample)"
+        $cpuLine
         ""
         "Top 5 by RAM:"
     )
@@ -543,12 +568,15 @@ try {
         $verdict = 'ATTENTION'
         $issues += "Only $freeMB MB RAM free - check top processes"
     }
-    if ($cpuAvg -ge 90) {
-        $verdict = 'CRITICAL'
-        $issues += "CPU sustained at $cpuAvg% - find runaway process"
-    } elseif ($cpuAvg -ge 70) {
-        if ($verdict -eq 'OK') { $verdict = 'ATTENTION' }
-        $issues += "CPU at $cpuAvg% - elevated"
+    # v3.7: guard the numeric compares - 'n/a' is a string now.
+    if ($cpuAvg -ne 'n/a') {
+        if ([double]$cpuAvg -ge 90) {
+            $verdict = 'CRITICAL'
+            $issues += "CPU sustained at $cpuAvg% - find runaway process"
+        } elseif ([double]$cpuAvg -ge 70) {
+            if ($verdict -eq 'OK') { $verdict = 'ATTENTION' }
+            $issues += "CPU at $cpuAvg% - elevated"
+        }
     }
     # Single process eating > 50% of RAM
     $bigGlut = $topMem | Where-Object { $_.RAM_MB -gt ($totalMB * 0.5) }
@@ -559,8 +587,9 @@ try {
         }
     }
 
+    $cpuHead = if ($cpuAvg -eq 'n/a') { 'CPU n/a' } else { "CPU avg $cpuAvg%" }
     Add-Finding -Section "Memory & CPU" -Verdict $verdict `
-                -Headline "$freeMB MB RAM free, CPU avg $cpuAvg%" -Details $details -Issues $issues
+                -Headline "$freeMB MB RAM free, $cpuHead" -Details $details -Issues $issues
 
     $Snapshot['MemoryCPU'] = @{
         TotalRAM_MB = $totalMB; FreeRAM_MB = $freeMB; UsedPct = $usedPct
@@ -647,6 +676,111 @@ Write-Host "    done." -ForegroundColor DarkGray
 
 #endregion
 
+#region --- 4b. Windows Update status (v3.7) --------------------------------
+# WHY: the hotfix list above only shows what DID install. A machine that
+# silently stopped updating months ago looks identical to a healthy one in
+# that list. Two signals catch it: the last successful install time that
+# the WU agent records, and the number of applicable-but-not-installed
+# updates the agent itself reports. The COM search can hang against a dead
+# WSUS, so it runs inside a job with a 3-minute cap.
+
+Write-Section "4b/12 Windows Update status"
+
+try {
+    $wuDetails = @()
+    $wuIssues  = @()
+    $wuVerdict = 'OK'
+
+    # Last successful install time (written by the WU agent after every
+    # successful install pass).
+    $wuLastSuccess = $null
+    $wuLastAgeDays = $null
+    try {
+        $wuRes = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install' -ErrorAction Stop
+        if ($wuRes.LastSuccessTime) {
+            # Stored as a string like "2026-09-14 03:12:45" (UTC)
+            $wuLastSuccess = [DateTime]::Parse($wuRes.LastSuccessTime, [Globalization.CultureInfo]::InvariantCulture).ToLocalTime()
+            $wuLastAgeDays = [int]((Get-Date) - $wuLastSuccess).TotalDays
+        }
+    } catch { }
+
+    if ($wuLastSuccess) {
+        $lastLine = "Last successful install : $($wuLastSuccess.ToString('yyyy-MM-dd HH:mm')) ($wuLastAgeDays days ago)"
+        if ($wuLastAgeDays -gt 45) {
+            $wuDetails += New-Detail -Text $lastLine -Severity 'warn'
+            $wuVerdict = 'ATTENTION'
+            $wuIssues += "No successful Windows Update install in $wuLastAgeDays days"
+        } else {
+            $wuDetails += New-Detail -Text $lastLine -Severity 'pass'
+        }
+    } else {
+        $wuDetails += New-Detail -Text "Last successful install : unknown (no LastSuccessTime recorded)" -Severity 'info'
+    }
+
+    # Pending (applicable, not installed, not hidden) count via the WU agent.
+    $wuPending = $null
+    $wuSearchBlock = {
+        try {
+            $session  = New-Object -ComObject Microsoft.Update.Session
+            $searcher = $session.CreateUpdateSearcher()
+            $result   = $searcher.Search("IsInstalled=0 and IsHidden=0")
+            $names = @()
+            foreach ($u in $result.Updates) { $names += [string]$u.Title }
+            return @{ PendingCount = [int]$result.Updates.Count; Names = $names }
+        } catch {
+            return @{ PendingCount = -1; Error = $_.Exception.Message }
+        }
+    }
+    if (Get-Command Invoke-WithJobTimeout -ErrorAction SilentlyContinue) {
+        Write-Host "    querying Windows Update agent (up to 3 min)..." -ForegroundColor DarkGray
+        $wuPending = Invoke-WithJobTimeout -ScriptBlock $wuSearchBlock -TimeoutMinutes 3 -Label 'Windows Update search'
+    } else {
+        # No timeout helper - still run it, but note it may take a while.
+        Write-Host "    querying Windows Update agent (no timeout helper available)..." -ForegroundColor DarkGray
+        $wuPending = & $wuSearchBlock
+    }
+
+    if ($null -eq $wuPending) {
+        $wuDetails += New-Detail -Text "Pending updates         : unknown (search timed out after 3 min - WSUS/WU service unreachable?)" -Severity 'warn'
+        if ($wuVerdict -eq 'OK') { $wuVerdict = 'ATTENTION' }
+        $wuIssues += "Windows Update search timed out - update agent may be wedged"
+    } elseif ([int]$wuPending.PendingCount -lt 0) {
+        $wuDetails += New-Detail -Text "Pending updates         : unknown (search failed: $($wuPending.Error))" -Severity 'warn'
+    } else {
+        $pendLine = "Pending updates         : $($wuPending.PendingCount) applicable, not yet installed"
+        if ([int]$wuPending.PendingCount -gt 5) {
+            $wuDetails += New-Detail -Text $pendLine -Severity 'warn'
+            $wuVerdict = 'ATTENTION'
+            $wuIssues += "$($wuPending.PendingCount) Windows updates pending - machine is behind"
+        } elseif ([int]$wuPending.PendingCount -gt 0) {
+            $wuDetails += New-Detail -Text $pendLine -Severity 'info'
+        } else {
+            $wuDetails += New-Detail -Text $pendLine -Severity 'pass'
+        }
+        if ($wuPending.Names -and $wuPending.Names.Count -gt 0) {
+            foreach ($nm in ($wuPending.Names | Select-Object -First 10)) { $wuDetails += "  - $nm" }
+            if ($wuPending.Names.Count -gt 10) { $wuDetails += "  ... and $($wuPending.Names.Count - 10) more" }
+        }
+    }
+
+    $wuHead = "last install $(if($wuLastAgeDays -ne $null){"$wuLastAgeDays d ago"}else{'unknown'}), pending $(if($wuPending -and [int]$wuPending.PendingCount -ge 0){$wuPending.PendingCount}else{'?'})"
+    Add-Finding -Section "Windows Update" -Verdict $wuVerdict -Headline $wuHead `
+                -Details $wuDetails -Issues $wuIssues
+
+    $Snapshot['WindowsUpdate'] = @{
+        LastSuccess    = $(if($wuLastSuccess){$wuLastSuccess.ToString('yyyy-MM-dd HH:mm')}else{$null})
+        LastSuccessAge = $wuLastAgeDays
+        Pending        = $(if($wuPending){[int]$wuPending.PendingCount}else{$null})
+    }
+} catch {
+    Add-Finding -Section "Windows Update" -Verdict 'ATTENTION' `
+                -Headline "Windows Update status check failed" -Details @("Error: $($_.Exception.Message)")
+}
+
+Write-Host "    done." -ForegroundColor DarkGray
+
+#endregion
+
 #region --- 5. Services ------------------------------------------------------
 
 Write-Section "5/12  Services"
@@ -654,21 +788,58 @@ Write-Section "5/12  Services"
 try {
     $svcs = Get-CimInstance Win32_Service -ErrorAction Stop
 
-    # Services set to Auto but not running (excluding the well-known trigger-start ones).
-    # BITS explicitly excluded - set to Auto (Delayed Start) but spends most of its
-    # time stopped, triggering false positives Eric doesn't want to see.
-    $autoStopped = $svcs | Where-Object { $_.StartMode -eq 'Auto' -and $_.State -ne 'Running' -and $_.Name -notmatch '^(BITS|gupdate|MapsBroker|sppsvc|edgeupdate|TrustedInstaller|WbioSrvc|RemoteRegistry)' }
+    # v3.7: trigger-start detection. A service with a TriggerInfo key under
+    # its registry node is started on demand by the SCM (network arrival,
+    # device arrival, RPC endpoint, etc.) and sits Stopped by DESIGN even
+    # when StartMode says Auto. Flagging those produced the bulk of the
+    # false "auto-start stopped" noise. Win32_Service has no column for
+    # this, so we check the registry per service.
+    function Test-TriggerStartService {
+        param([string]$Name)
+        return (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name\TriggerInfo")
+    }
 
-    # Essential services we explicitly care about
-    # NOTE: BITS intentionally omitted from this list (per Eric's preference).
-    # BITS frequently goes Stopped/Manual on healthy boxes; flagging it
-    # produced false positives more often than real findings.
-    $essentials = @('wuauserv','WinDefend','RpcSs','Dhcp','Dnscache','LanmanServer','LanmanWorkstation','Schedule')
+    # Services set to Auto but not running - excluding trigger-start ones (by
+    # registry, not by hard-coded name) plus the historical name list kept
+    # for anything that isn't trigger-marked but still idles by design.
+    $autoStopped = $svcs | Where-Object {
+        $_.StartMode -eq 'Auto' -and
+        $_.State -ne 'Running' -and
+        $_.Name -notmatch '^(BITS|gupdate|MapsBroker|sppsvc|edgeupdate|TrustedInstaller|WbioSrvc|RemoteRegistry)' -and
+        -not (Test-TriggerStartService -Name $_.Name)
+    }
+
+    # v3.7: Essential services come from the shared module list so Diagnostics
+    # and Remediation can never disagree about what "essential" means. Local
+    # copy below is the fallback when the module isn't loaded.
+    if (Get-Command Get-iDezignEssentialServices -ErrorAction SilentlyContinue) {
+        $essentialDefs = Get-iDezignEssentialServices
+    } else {
+        $essentialDefs = @(
+            @{Name='Dhcp';Auto=$true}, @{Name='Dnscache';Auto=$true}, @{Name='LanmanWorkstation';Auto=$true},
+            @{Name='LanmanServer';Auto=$true}, @{Name='EventLog';Auto=$true}, @{Name='Schedule';Auto=$true},
+            @{Name='CryptSvc';Auto=$true}, @{Name='BITS';Auto=$false}, @{Name='wuauserv';Auto=$false},
+            @{Name='WinDefend';Auto=$false}, @{Name='mpssvc';Auto=$true}, @{Name='W32Time';Auto=$false},
+            @{Name='Spooler';Auto=$true}
+        )
+    }
+    $essentials = @($essentialDefs | ForEach-Object { $_.Name })
     $essentialState = @()
     foreach ($e in $essentials) {
         $s = $svcs | Where-Object Name -eq $e
         if ($s) {
-            $essentialState += [PSCustomObject]@{ Name=$e; State=$s.State; StartMode=$s.StartMode }
+            # CRITICAL only when: not Running AND actual StartMode is Auto AND
+            # not trigger-started. Manual/trigger services that are stopped
+            # are INFO - that is their normal resting state.
+            $isTrigger = Test-TriggerStartService -Name $e
+            $isCrit    = ($s.State -ne 'Running') -and ($s.StartMode -eq 'Auto') -and (-not $isTrigger)
+            $essentialState += [PSCustomObject]@{
+                Name       = $e
+                State      = $s.State
+                StartMode  = $s.StartMode
+                Trigger    = $isTrigger
+                IsCritical = $isCrit
+            }
         }
     }
 
@@ -687,9 +858,11 @@ try {
 
     $details = @("Essential services:")
     $details += ($essentialState | ForEach-Object {
-        $line = "  {0,-22} {1,-10} (StartMode={2})" -f $_.Name, $_.State, $_.StartMode
-        if ($_.State -eq 'Running') { New-Detail -Text $line -Severity 'pass' }
-        else                        { New-Detail -Text $line -Severity 'fail' }
+        $modeStr = if ($_.Trigger) { "$($_.StartMode), trigger-start" } else { $_.StartMode }
+        $line = "  {0,-22} {1,-10} (StartMode={2})" -f $_.Name, $_.State, $modeStr
+        if     ($_.State -eq 'Running') { New-Detail -Text $line -Severity 'pass' }
+        elseif ($_.IsCritical)          { New-Detail -Text $line -Severity 'fail' }
+        else                            { New-Detail -Text ($line + "  [idle by design]") -Severity 'info' }
     })
     $details += ""
 
@@ -708,25 +881,29 @@ try {
 
     $verdict = 'OK'
     $issues  = @()
-    $criticalDown = $essentialState | Where-Object { $_.State -ne 'Running' }
-    if ($criticalDown) {
+    # v3.7: only the IsCritical ones (stopped + Auto + not trigger) drive CRITICAL.
+    $criticalDown = @($essentialState | Where-Object { $_.IsCritical })
+    if ($criticalDown.Count -gt 0) {
         $verdict = 'CRITICAL'
         foreach ($cd in $criticalDown) {
-            $issues += "Essential service '$($cd.Name)' is $($cd.State)"
+            $issues += "Essential service '$($cd.Name)' is $($cd.State) (StartMode=Auto)"
         }
     }
-    if (($autoStopped | Measure-Object).Count -gt 5) {
+    if ($autoStoppedCount -gt 5) {
         if ($verdict -eq 'OK') { $verdict = 'ATTENTION' }
-        $issues += "$(($autoStopped | Measure-Object).Count) auto-start services are stopped"
+        $issues += "$autoStoppedCount auto-start services are stopped"
     }
 
-    Add-Finding -Section "Services" -Verdict $verdict `
-                -Headline "$(($essentialState | Where-Object State -eq Running).Count)/$($essentials.Count) essentials running, $(($autoStopped | Measure-Object).Count) auto-start stopped" `
+    $idleByDesign = @($essentialState | Where-Object { $_.State -ne 'Running' -and -not $_.IsCritical }).Count
+    $headSvc = "$(@($essentialState | Where-Object State -eq Running).Count)/$($essentialState.Count) essentials running"
+    if ($idleByDesign -gt 0) { $headSvc += " ($idleByDesign idle by design)" }
+    $headSvc += ", $autoStoppedCount auto-start stopped"
+    Add-Finding -Section "Services" -Verdict $verdict -Headline $headSvc `
                 -Details $details -Issues $issues
 
     $Snapshot['Services'] = @{
         EssentialDown = @($criticalDown | ForEach-Object { $_.Name })
-        AutoStopped   = ($autoStopped | Measure-Object).Count
+        AutoStopped   = $autoStoppedCount
     }
 } catch {
     Add-Finding -Section "Services" -Verdict 'ATTENTION' `
@@ -922,7 +1099,44 @@ try {
     $mp = $null
     try { $mp = Get-MpComputerStatus -ErrorAction Stop } catch { }
 
-    if ($mp) {
+    # v3.7: $sigAge was only assigned inside the if($mp) branch but used in
+    # the headline afterwards - on third-party-AV boxes that printed "sigs
+    # days old". Initialize everything the headline needs up front.
+    $sigAge          = 'n/a'
+    $threats         = @()
+    $activeThreats   = @()
+    $defenderPassive = $false
+    $thirdPartyAV    = @()
+    $avHeadline      = ''
+
+    # Passive / SxS Passive = another registered AV owns real-time protection
+    # and Defender is deliberately standing down. That is NOT "Defender OFF".
+    if ($mp -and $mp.AMRunningMode -and ("$($mp.AMRunningMode)" -match 'Passive')) {
+        $defenderPassive = $true
+    }
+
+    # When Defender is not the active engine (unavailable OR passive), ask
+    # Security Center which product IS. productState is a bitfield:
+    #   0x1000 bit set -> product enabled / on
+    #   0x0010 bit set -> definitions out of date
+    if ((-not $mp) -or $defenderPassive) {
+        try {
+            $scProducts = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop)
+            foreach ($scp in $scProducts) {
+                $state   = [int]$scp.productState
+                $enabled = (($state -band 0x1000) -ne 0)
+                $stale   = (($state -band 0x10)   -ne 0)
+                $thirdPartyAV += [PSCustomObject]@{
+                    Name    = [string]$scp.displayName
+                    Enabled = $enabled
+                    Stale   = $stale
+                    State   = ('0x{0:X}' -f $state)
+                }
+            }
+        } catch { }
+    }
+
+    if ($mp -and -not $defenderPassive) {
         $sigAge = if ($mp.AntispywareSignatureLastUpdated) {
             [int]((Get-Date) - $mp.AntispywareSignatureLastUpdated).TotalDays
         } else { 999 }
@@ -969,15 +1183,43 @@ try {
         }
 
         # Recent threats
-        $threats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10
-        if ($threats) {
+        # v3.7: Get-MpThreatDetection is the FULL protection history - every
+        # blocked download for the life of the install. A 2-year-old resolved
+        # detection was turning the whole section CRITICAL. Now:
+        #   * only the last 30 days are listed
+        #   * CRITICAL only when Get-MpThreat reports something still ACTIVE
+        #   * older, resolved history gets one INFO line
+        $allThreats = @(Get-MpThreatDetection -ErrorAction SilentlyContinue)
+        $recent30   = @($allThreats | Where-Object { $_.InitialDetectionTime -gt (Get-Date).AddDays(-30) })
+        $threats    = @($recent30 | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10)
+        $activeThreats = @()
+        try { $activeThreats = @(Get-MpThreat -ErrorAction Stop | Where-Object { $_.IsActive }) } catch { }
+
+        if ($threats.Count -gt 0) {
             $details += ""
-            $details += New-Detail -Text "Recent threat detections ($($threats.Count)):" -Severity 'fail'
+            $sevRecent = if ($activeThreats.Count -gt 0) { 'fail' } else { 'warn' }
+            $details += New-Detail -Text "Threat detections in last 30 days ($($threats.Count)):" -Severity $sevRecent
             $details += ($threats | ForEach-Object {
-                New-Detail -Text "  $($_.InitialDetectionTime.ToString('yyyy-MM-dd HH:mm')) - $($_.ThreatID) - $($_.Resources -join '; ')" -Severity 'fail'
+                New-Detail -Text "  $($_.InitialDetectionTime.ToString('yyyy-MM-dd HH:mm')) - $($_.ThreatID) - $($_.Resources -join '; ')" -Severity $sevRecent
             })
+        }
+        if ($activeThreats.Count -gt 0) {
+            $details += New-Detail -Text "ACTIVE (unresolved) threats: $($activeThreats.Count)" -Severity 'fail'
+            foreach ($at in ($activeThreats | Select-Object -First 10)) {
+                $details += New-Detail -Text "  $($at.ThreatName) (severity $($at.SeverityID))" -Severity 'fail'
+            }
             $verdict = 'CRITICAL'
-            $issues += "$($threats.Count) recent threat detection(s) - investigate"
+            $issues += "$($activeThreats.Count) ACTIVE threat(s) not yet remediated - investigate now"
+        } elseif ($threats.Count -gt 0) {
+            if ($verdict -ne 'CRITICAL') { $verdict = 'ATTENTION' }
+            $issues += "$($threats.Count) threat detection(s) in last 30 days (all handled by Defender) - review"
+        }
+        $olderCount = $allThreats.Count - $recent30.Count
+        if ($olderCount -gt 0 -and $threats.Count -eq 0) {
+            $details += ""
+            $details += New-Detail -Text "$olderCount detections in protection history (all resolved, none in last 30 days)" -Severity 'info'
+        } elseif ($olderCount -gt 0) {
+            $details += New-Detail -Text "  plus $olderCount older detections in protection history (all resolved)" -Severity 'info'
         }
 
         # --- Defender exclusion summary ---
@@ -1019,8 +1261,52 @@ try {
                 $issues += "Unusually many path exclusions ($pathCount) - verify each is legitimate"
             }
         } catch { }
+        $avHeadline = "Defender $(if($mp.AntivirusEnabled){'ON'}else{'OFF'}), sigs $sigAge days old"
     } else {
-        $details += New-Detail -Text "Defender status: unavailable (third-party AV may be installed)" -Severity 'warn'
+        # v3.7: Defender is passive or unavailable - report who IS protecting
+        # the box instead of shouting "Defender OFF" at a Malwarebytes install.
+        if ($defenderPassive) {
+            $details += New-Detail -Text "Windows Defender: $($mp.AMRunningMode) (another AV product is the active engine)" -Severity 'info'
+        } else {
+            $details += New-Detail -Text "Windows Defender: status unavailable (Get-MpComputerStatus failed)" -Severity 'info'
+        }
+
+        # Products registered with Security Center, excluding Defender itself
+        $otherAV = @($thirdPartyAV | Where-Object { $_.Name -notmatch 'Windows Defender|Microsoft Defender' })
+        $activeAV = @($otherAV | Where-Object { $_.Enabled })
+
+        if ($otherAV.Count -gt 0) {
+            $details += ""
+            $details += "Registered antivirus products (Security Center):"
+            foreach ($av in $otherAV) {
+                $avState = if ($av.Enabled) { 'active' } else { 'INACTIVE' }
+                if ($av.Stale) { $avState += ', definitions OUT OF DATE' }
+                $avLine = "  $($av.Name) : $avState (productState $($av.State))"
+                if ($av.Enabled -and -not $av.Stale) { $details += New-Detail -Text $avLine -Severity 'pass' }
+                elseif ($av.Enabled)                 { $details += New-Detail -Text $avLine -Severity 'warn' }
+                else                                 { $details += New-Detail -Text $avLine -Severity 'warn' }
+            }
+        }
+
+        if ($activeAV.Count -gt 0) {
+            $names = ($activeAV | ForEach-Object { $_.Name }) -join ', '
+            $avHeadline = "AV: $names (active)$(if($defenderPassive){', Defender passive'})"
+            $staleAV = @($activeAV | Where-Object { $_.Stale })
+            if ($staleAV.Count -gt 0) {
+                if ($verdict -ne 'CRITICAL') { $verdict = 'ATTENTION' }
+                $issues += "AV definitions out of date: $(($staleAV | ForEach-Object { $_.Name }) -join ', ')"
+            }
+        } elseif ($otherAV.Count -gt 0) {
+            # Something is registered but nothing is enabled - that IS a problem.
+            $avHeadline = "AV registered but NOT active ($(($otherAV | ForEach-Object { $_.Name }) -join ', '))"
+            $verdict = 'CRITICAL'
+            $issues += "No active antivirus: registered product(s) are disabled and Defender is $(if($defenderPassive){'passive'}else{'unavailable'})"
+        } else {
+            $avHeadline = "AV status unknown (Defender $(if($defenderPassive){'passive'}else{'unavailable'}), no Security Center product found)"
+            if ($verdict -ne 'CRITICAL') { $verdict = 'ATTENTION' }
+            $issues += "Could not confirm any active antivirus - verify manually in Windows Security"
+            $details += New-Detail -Text "No third-party AV registered with Security Center - verify protection manually." -Severity 'warn'
+        }
     }
 
     # Firewall
@@ -1053,15 +1339,22 @@ try {
         $details += ($tasks | Select-Object -First 10 | ForEach-Object { "  $($_.TaskPath)$($_.TaskName)  (author: $($_.Author))" })
     }
 
+    # v3.7: headline is built by whichever branch ran above (Defender active,
+    # Defender passive + third-party, or unavailable) so it never says
+    # "Defender OFF" when another product is doing the job.
+    if (-not $avHeadline) { $avHeadline = 'AV status unknown' }
     Add-Finding -Section "Security" -Verdict $verdict `
-                -Headline "Defender $(if($mp.AntivirusEnabled){'ON'}else{'OFF'}), sigs $sigAge days old" `
+                -Headline $avHeadline `
                 -Details $details -Issues $issues
 
     $Snapshot['Security'] = @{
-        DefenderEnabled = $mp.AntivirusEnabled
-        RealTime        = $mp.RealTimeProtectionEnabled
+        DefenderEnabled = $(if($mp){[bool]$mp.AntivirusEnabled}else{$null})
+        RealTime        = $(if($mp){[bool]$mp.RealTimeProtectionEnabled}else{$null})
+        DefenderPassive = $defenderPassive
+        ThirdPartyAV    = @($thirdPartyAV | Where-Object { $_.Enabled } | ForEach-Object { $_.Name })
         SigAgeDays      = $sigAge
         ThreatCount     = ($threats | Measure-Object).Count
+        ActiveThreats   = $(if($activeThreats){@($activeThreats).Count}else{0})
     }
 } catch {
     Add-Finding -Section "Security" -Verdict 'ATTENTION' `
@@ -1128,23 +1421,28 @@ Write-Host "    done." -ForegroundColor DarkGray
 
 Write-Section "9/12  Pending state (reboot signals)"
 
-function Test-PendingReboot {
-    $signals = @()
-    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')   { $signals += 'CBS RebootPending' }
-    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')  { $signals += 'WindowsUpdate RebootRequired' }
-    $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
-    if ($sm -and $sm.PendingFileRenameOperations) { $signals += 'PendingFileRenameOperations' }
-    if (Test-Path 'C:\Windows\WinSxS\pending.xml') { $signals += 'pending.xml exists in WinSxS' }
-    try {
-        $active = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' -Name ComputerName -ErrorAction Stop).ComputerName
-        $target = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName'      -Name ComputerName -ErrorAction Stop).ComputerName
-        if ($active -and $target -and ($active -ne $target)) { $signals += "Computer rename pending ($active -> $target)" }
-    } catch { }
-    return $signals
+# v3.7: local fallback only. If iDezign_Common.psm1 loaded, its richer
+# Test-PendingReboot (also checks pending optional-feature transitions) wins;
+# defining this unconditionally used to shadow the module version.
+if (-not (Get-Command Test-PendingReboot -ErrorAction SilentlyContinue)) {
+    function Test-PendingReboot {
+        $signals = @()
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')   { $signals += 'CBS RebootPending' }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')  { $signals += 'WindowsUpdate RebootRequired' }
+        $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+        if ($sm -and $sm.PendingFileRenameOperations) { $signals += 'PendingFileRenameOperations' }
+        if (Test-Path 'C:\Windows\WinSxS\pending.xml') { $signals += 'pending.xml exists in WinSxS' }
+        try {
+            $active = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName' -Name ComputerName -ErrorAction Stop).ComputerName
+            $target = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ComputerName'      -Name ComputerName -ErrorAction Stop).ComputerName
+            if ($active -and $target -and ($active -ne $target)) { $signals += "Computer rename pending ($active -> $target)" }
+        } catch { }
+        return ,$signals
+    }
 }
 
 try {
-    $pending = Test-PendingReboot
+    $pending = @(Test-PendingReboot)
     $details = @()
     $verdict = 'OK'
     $issues  = @()
@@ -1547,6 +1845,7 @@ try {
         $sev = switch ($Status) {
             'PASS'  { 'pass' }
             'FAIL'  { 'fail' }
+            'WARN'  { 'warn' }   # v3.7: amber - worth attention, not a hard fail
             default { 'info' }   # INFO and anything else -> neutral
         }
         return (New-Detail -Text $text -Severity $sev)
@@ -1672,6 +1971,32 @@ try {
     $vDetails += ""
 
     # ===== Applications =====
+    # v3.7: per-user checks must look at the person sitting at the console,
+    # not the elevated account running this script (often a different local
+    # admin). Resolve the console user's SID + profile and read HKEY_USERS\<sid>
+    # and <profile>\Downloads. Falls back to the current user if resolution
+    # fails (not logged on, module missing) and labels the line either way.
+    $consoleUser = $null
+    if (Get-Command Get-iDezignConsoleUserSid -ErrorAction SilentlyContinue) {
+        try { $consoleUser = Get-iDezignConsoleUserSid } catch { $consoleUser = $null }
+    }
+    if ($consoleUser -and $consoleUser.Sid) {
+        $userHive    = "Registry::HKEY_USERS\$($consoleUser.Sid)"
+        $userProfile = $consoleUser.ProfilePath
+        $userLabel   = $consoleUser.Name
+        # The console user's hive is only loaded while they are logged on.
+        if (-not (Test-Path $userHive)) {
+            $userHive  = 'HKCU:'
+            $userLabel = "$env:USERNAME (console user hive not loaded)"
+        }
+    } else {
+        $userHive    = 'HKCU:'
+        $userProfile = $env:USERPROFILE
+        $userLabel   = "$env:USERNAME (current user - console user not resolved)"
+    }
+    if (-not $userProfile) { $userProfile = $env:USERPROFILE }
+    $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Per-user checks target' $userLabel
+
     # Chrome
     $chromeInstalled = (Test-Path 'C:\Program Files\Google\Chrome\Application\chrome.exe') -or
                       (Test-Path 'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe')
@@ -1681,15 +2006,17 @@ try {
         $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Google Chrome' 'not installed'
     }
 
-    # Chrome as default browser (registry check)
+    # Chrome as default browser (registry check, console user's hive)
     try {
-        $httpDefault = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice' -Name ProgId -ErrorAction Stop).ProgId
+        $httpDefault = (Get-ItemProperty "$userHive\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice" -Name ProgId -ErrorAction Stop).ProgId
         if ($httpDefault -like 'ChromeHTML*') {
-            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Chrome as default browser' 'YES'
+            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Chrome as default browser' "YES (user: $userLabel)"
         } else {
-            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Chrome as default browser' "no (current: $httpDefault)"
+            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Chrome as default browser' "no (current: $httpDefault, user: $userLabel)"
         }
-    } catch { }
+    } catch {
+        $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Chrome as default browser' "unknown (no UserChoice for $userLabel)"
+    }
 
     # Claude Desktop (MSIX provisioned)
     try {
@@ -1705,16 +2032,16 @@ try {
     $osInstalled = (Test-Path 'C:\Program Files\Open-Shell') -or (Test-Path 'C:\Program Files (x86)\Open-Shell')
     if ($osInstalled) {
         $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell' 'INSTALLED'
-        # Check iDezign defaults applied
+        # Check iDezign defaults applied (console user's hive - v3.7)
         try {
-            $osMenuStyle = (Get-ItemProperty 'HKCU:\Software\IvoSoft\ClassicStartMenu\Settings' -Name MenuStyle -ErrorAction Stop).MenuStyle
+            $osMenuStyle = (Get-ItemProperty "$userHive\Software\IvoSoft\ClassicStartMenu\Settings" -Name MenuStyle -ErrorAction Stop).MenuStyle
             if ($osMenuStyle -eq 2) {
-                $vDetails += Add-VerifyLine 'PASS' '[opt]' 'App: Open-Shell iDezign defaults' 'APPLIED (Win7-style menu)'
+                $vDetails += Add-VerifyLine 'PASS' '[opt]' 'App: Open-Shell iDezign defaults' "APPLIED (Win7-style menu, user: $userLabel)"
             } else {
-                $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell iDezign defaults' "custom (MenuStyle=$osMenuStyle)"
+                $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell iDezign defaults' "custom (MenuStyle=$osMenuStyle, user: $userLabel)"
             }
         } catch {
-            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell iDezign defaults' 'NOT applied (vanilla)'
+            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell iDezign defaults' "NOT applied (vanilla, user: $userLabel)"
         }
     } else {
         $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Open-Shell' 'not installed'
@@ -1732,9 +2059,11 @@ try {
         $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: TeamViewer service' 'not installed'
     }
 
-    # Malwarebytes installer (staged for tech to run post-deploy)
-    $mwbStaged = Test-Path "$env:USERPROFILE\Downloads\MBSetup.exe"
-    $mwbStatus = if ($mwbStaged) { 'YES (in ~\Downloads)' } else { 'no' }
+    # Malwarebytes installer (staged for tech to run post-deploy) - v3.7:
+    # look in the CONSOLE user's Downloads, not the elevated account's.
+    $mwbPath   = Join-Path $userProfile 'Downloads\MBSetup.exe'
+    $mwbStaged = Test-Path -LiteralPath $mwbPath
+    $mwbStatus = if ($mwbStaged) { "YES ($mwbPath)" } else { "no (checked $userProfile\Downloads)" }
     $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Malwarebytes installer staged' $mwbStatus
     $vDetails += ""
 
@@ -1749,11 +2078,32 @@ try {
     if (Get-Command Get-LocalUser -ErrorAction SilentlyContinue) {
         try { $repairExists = [bool](Get-LocalUser -Name 'REPAIR' -ErrorAction Stop) } catch { }
     }
-    if (-not $repairExists) {
-        # Fallback: `net user REPAIR` returns 0 if the account exists.
-        $null = & net user REPAIR 2>&1
-        $repairExists = ($LASTEXITCODE -eq 0)
+    # v3.7: always run `net user REPAIR` (not just as a fallback) because its
+    # output carries the three facts we now report: Account active, Password
+    # last set, Password expires. Get-LocalUser has these too but doesn't
+    # load reliably on 25H2, so the text parse is the dependable path.
+    $netUserOut = @(& net user REPAIR 2>&1 | ForEach-Object { "$_" })
+    $netUserRc  = $LASTEXITCODE
+    if (-not $repairExists) { $repairExists = ($netUserRc -eq 0) }
+
+    $repairActive    = $null
+    $repairPwdSet    = $null
+    $repairPwdSetRaw = ''
+    $repairPwdExp    = ''
+    if ($netUserRc -eq 0) {
+        foreach ($ln in $netUserOut) {
+            if ($ln -match '^\s*Account active\s+(\S.*)$') {
+                $repairActive = ("$($Matches[1])".Trim() -match '^(Yes|Y)')
+            } elseif ($ln -match '^\s*Password last set\s+(\S.*)$') {
+                $raw = "$($Matches[1])".Trim()
+                try { $repairPwdSet = [DateTime]::Parse($raw) } catch { $repairPwdSet = $null }
+                if (-not $repairPwdSet) { $repairPwdSetRaw = $raw }
+            } elseif ($ln -match '^\s*Password expires\s+(\S.*)$') {
+                $repairPwdExp = "$($Matches[1])".Trim()
+            }
+        }
     }
+
     if ($repairExists) {
         $isInAdmins = $false
         if (Get-Command Get-LocalGroupMember -ErrorAction SilentlyContinue) {
@@ -1773,6 +2123,31 @@ try {
             $vDetails += Add-VerifyLine 'FAIL' '[REQ]' 'Security: REPAIR account' "exists but NOT in $adminGroupName"
             if ($vVerdict -eq 'OK') { $vVerdict = 'ATTENTION' }
             $vIssues += "REPAIR account exists but is not an administrator"
+        }
+
+        # v3.7: account state + password age. A disabled REPAIR account is
+        # as useless as a missing one; a stale password means nobody has
+        # rotated it since deployment.
+        if ($null -ne $repairActive) {
+            if ($repairActive) {
+                $vDetails += Add-VerifyLine 'PASS' '[REQ]' 'Security: REPAIR account active' 'YES'
+            } else {
+                $vDetails += Add-VerifyLine 'FAIL' '[REQ]' 'Security: REPAIR account active' 'NO - account is DISABLED'
+                if ($vVerdict -eq 'OK') { $vVerdict = 'ATTENTION' }
+                $vIssues += "REPAIR account exists but is disabled - tech can't log in with it"
+            }
+        }
+        if ($repairPwdSet) {
+            $pwdAgeDays = [int]((Get-Date) - $repairPwdSet).TotalDays
+            $pwdText = "$($repairPwdSet.ToString('yyyy-MM-dd')) ($pwdAgeDays days ago)$(if($repairPwdExp){", expires: $repairPwdExp"})"
+            if ($pwdAgeDays -gt 180) {
+                $vDetails += Add-VerifyLine 'WARN' '[opt]' 'Security: REPAIR password last set' "$pwdText - over 180 days, consider rotating"
+                $vIssues += "REPAIR password last set $pwdAgeDays days ago (>180) - rotate"
+            } else {
+                $vDetails += Add-VerifyLine 'PASS' '[opt]' 'Security: REPAIR password last set' $pwdText
+            }
+        } elseif ($repairPwdSetRaw) {
+            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Security: REPAIR password last set' "$repairPwdSetRaw (could not parse date)"
         }
     } else {
         $vDetails += Add-VerifyLine 'FAIL' '[REQ]' 'Security: REPAIR account' 'MISSING'
@@ -1817,19 +2192,9 @@ try {
         $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Naming: computer name' "$env:COMPUTERNAME (doesn't match dd-MM-yy)"
     }
 
-    # ===== Pre-flight helper status summary =====
-    # Just call them to show the module is loaded and the helpers respond.
-    # No verification implications - they just record current state.
-    if (Get-Command Test-iDezignDiskSpace -ErrorAction SilentlyContinue) {
-        $vDetails += ""
-        $vDetails += "  Module pre-flight helpers status:"
-        $vDetails += "  (these are the same helpers Cleanup uses for pre-flight)"
-        $vDetails += "  - Test-iDezignDiskSpace : available"
-        $vDetails += "  - Test-iDezignNetwork   : available"
-        $vDetails += "  - Test-iDezignBitLocker : available"
-        $vDetails += "  - Get-iDezignActivationStatus : available"
-        $vDetails += "  - Sync-SystemTime       : available (NOT called - read-only mode)"
-    }
+    # v3.7: the "module pre-flight helpers available" block that used to be
+    # printed here was internal plumbing (function names) showing up in a
+    # client-visible report. Removed.
 
     # Count passes/fails for headline. Lines built by Add-VerifyLine are now
     # severity-tagged objects, so we read .Severity directly - more reliable
@@ -1923,13 +2288,18 @@ try {
 #endregion
 
 #region --- Driver updates (Dell / Intel) ------------------------------------
-# Detects pending Dell + Intel driver/firmware updates and OFFERS to install.
-# Dell path uses Dell Command | Update (dcu-cli); if it's missing we install it
-# first (per Eric's choice). Intel path reports the Intel Driver & Support
-# Assistant presence (DSA has no reliable silent CLI, so we surface + point to it).
-# This section is interactive by design - it can change the machine if you say yes.
+# v3.7: SCAN ONLY. This section used to winget-install Dell Command | Update
+# and offer to /applyUpdates - both are writes, and both contradicted the
+# "read-only" promise on the banner. Now:
+#   * If DCU is missing we say so and point at Cleanup Phase 1l (which
+#     installs it). Nothing is installed here.
+#   * If DCU is present we run dcu-cli /scan with a report directory and
+#     parse the XML it writes, so we can list the pending updates by name.
+#     Applying them is the operator's job via DCU itself (or Cleanup).
+# Intel path reports Intel Driver & Support Assistant presence only (DSA has
+# no reliable silent CLI, so we surface + point to it).
 
-Write-Section "Driver updates (Dell / Intel)"
+Write-Section "Driver updates (Dell / Intel) - scan only"
 
 $drvDetails = @()
 $drvIssues  = @()
@@ -1939,7 +2309,7 @@ try {
     $mfr = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).Manufacturer
 } catch { $mfr = '' }
 
-# ----- Dell Command | Update -------------------------------------------------
+# ----- Dell Command | Update (scan only) ------------------------------------
 if ("$mfr" -match 'Dell') {
     $dcuCandidates = @(
         'C:\Program Files\Dell\CommandUpdate\dcu-cli.exe',
@@ -1948,55 +2318,82 @@ if ("$mfr" -match 'Dell') {
     $dcu = $dcuCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $dcu) {
-        Write-Host "  Dell Command | Update not found - installing (per config)..." -ForegroundColor DarkGray
-        $installed = $false
-        if (Get-Command winget -ErrorAction SilentlyContinue) {
-            try {
-                Start-Process winget -ArgumentList @(
-                    'install','--id','Dell.CommandUpdate.Universal','-e',
-                    '--silent','--accept-package-agreements','--accept-source-agreements'
-                ) -Wait -NoNewWindow -ErrorAction Stop
-                $installed = $true
-            } catch {
-                $drvDetails += New-Detail "Dell Command | Update auto-install via winget failed: $($_.Exception.Message)" 'warn'
-            }
-        } else {
-            $drvDetails += New-Detail "winget not available - cannot auto-install Dell Command | Update. Install it manually from dell.com/support." 'warn'
-        }
-        if ($installed) { $dcu = $dcuCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1 }
-    }
-
-    if ($dcu) {
-        Write-Host "  Scanning for Dell updates (this can take a minute)..." -ForegroundColor DarkGray
+        Write-Host "  Dell Command Update not installed - Cleanup Phase 1l installs it" -ForegroundColor DarkGray
+        $drvDetails += New-Detail "Dell Command Update not installed - Cleanup Phase 1l installs it. Dell driver scan skipped." 'info'
+    } else {
+        Write-Host "  Scanning for Dell updates (scan only, up to 10 min)..." -ForegroundColor DarkGray
+        $dcuReportDir = Join-Path $env:TEMP "idz-dcu-scan-$Timestamp"
         try {
-            $scanOut = & $dcu /scan 2>&1 | Out-String
-            $scanRc  = $LASTEXITCODE
-            # dcu-cli: rc 0 = updates found/applied OK, rc 500 = no updates, others = error
-            if ($scanRc -eq 500 -or $scanOut -match 'No updates') {
-                $drvDetails += New-Detail "Dell: no applicable updates - firmware/drivers are current." 'pass'
-            } elseif ($scanRc -eq 0) {
-                $drvVerdict = 'ATTENTION'
-                $drvDetails += New-Detail "Dell: updates are available (Dell Command | Update scan)." 'warn'
-                foreach ($ln in ($scanOut -split "`r?`n" | Where-Object { $_ -match '^\s*-|update|driver|firmware|BIOS' } | Select-Object -First 25)) {
-                    if ($ln.Trim()) { $drvDetails += New-Detail ("  " + $ln.Trim()) 'info' }
-                }
-                $drvIssues += "Dell driver/firmware updates available"
+            New-Item -Path $dcuReportDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
 
-                Write-Host ""
-                $applyAns = Read-Host "  Apply the available Dell updates now? (Y/N)"
-                if ($applyAns -match '^(y|yes)$') {
-                    Write-Host "  Applying Dell updates (reboot suppressed - reboot manually after)..." -ForegroundColor DarkGray
-                    $applyOut = & $dcu /applyUpdates -reboot=disable 2>&1 | Out-String
-                    $drvDetails += New-Detail "Dell updates applied (reboot suppressed). Reboot to complete." 'info'
-                    $drvDetails += New-Detail ("  dcu-cli applyUpdates rc=$LASTEXITCODE") 'info'
-                } else {
-                    $drvDetails += New-Detail "Dell updates available but NOT applied (you chose No)." 'warn'
-                }
+            # dcu-cli exit codes: 0 = success (updates found), 500 = no updates
+            # available, 1 = reboot required, 501/502/503 = scan errors.
+            $scanRc = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $scanRc = Start-ProcessWithTimeout -FilePath $dcu `
+                            -ArgumentList @('/scan', "-report=$dcuReportDir") `
+                            -TimeoutMinutes 10 -Label 'dcu-cli /scan' -NoNewWindow $true
             } else {
-                $drvDetails += New-Detail "Dell Command | Update scan returned rc=$scanRc. Check Dell logs." 'warn'
+                # No timeout helper - run inline (DCU normally finishes in 1-3 min).
+                $null = & $dcu /scan "-report=$dcuReportDir" 2>&1
+                $scanRc = $LASTEXITCODE
+            }
+
+            # DCU writes DCUApplicableUpdates.xml into the report dir
+            $dcuXmlPath = Get-ChildItem -Path $dcuReportDir -Filter '*.xml' -ErrorAction SilentlyContinue |
+                          Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            $dcuUpdates = @()
+            if ($dcuXmlPath) {
+                try {
+                    [xml]$dcuXml = Get-Content -LiteralPath $dcuXmlPath.FullName -Raw -ErrorAction Stop
+                    # Schema: <updates><update name=".." type=".." urgency=".." version=".." .../></updates>
+                    $nodes = $dcuXml.SelectNodes('//update')
+                    foreach ($n in $nodes) {
+                        $nm  = "$($n.GetAttribute('name'))".Trim()
+                        $ty  = "$($n.GetAttribute('type'))".Trim()
+                        $ur  = "$($n.GetAttribute('urgency'))".Trim()
+                        $ver = "$($n.GetAttribute('version'))".Trim()
+                        if ($nm) {
+                            $dcuUpdates += [PSCustomObject]@{ Name=$nm; Type=$ty; Urgency=$ur; Version=$ver }
+                        }
+                    }
+                } catch {
+                    $drvDetails += New-Detail "Dell scan report could not be parsed: $($_.Exception.Message)" 'warn'
+                }
+            }
+
+            if ($scanRc -eq -1) {
+                $drvDetails += New-Detail "Dell Command Update scan TIMED OUT after 10 min - run DCU manually." 'warn'
+                if ($drvVerdict -eq 'OK') { $drvVerdict = 'ATTENTION' }
+            } elseif ($scanRc -eq 500 -or ($scanRc -eq 0 -and $dcuUpdates.Count -eq 0 -and -not $dcuXmlPath)) {
+                $drvDetails += New-Detail "Dell: no applicable updates - firmware/drivers are current." 'pass'
+            } elseif ($dcuUpdates.Count -gt 0) {
+                $drvVerdict = 'ATTENTION'
+                $names = ($dcuUpdates | Select-Object -First 8 | ForEach-Object { $_.Name }) -join '; '
+                if ($dcuUpdates.Count -gt 8) { $names += "; ... (+$($dcuUpdates.Count - 8) more)" }
+                $drvDetails += New-Detail "$($dcuUpdates.Count) Dell updates available: $names" 'warn'
+                foreach ($u in $dcuUpdates) {
+                    $tag = @()
+                    if ($u.Type)    { $tag += $u.Type }
+                    if ($u.Urgency) { $tag += $u.Urgency }
+                    if ($u.Version) { $tag += "v$($u.Version)" }
+                    $drvDetails += New-Detail ("  - $($u.Name)$(if($tag.Count){' [' + ($tag -join ', ') + ']'})") 'info'
+                }
+                $drvDetails += New-Detail "  To apply: open Dell Command | Update (Start menu) and click Check / Install, or run Cleanup." 'info'
+                $drvIssues += "$($dcuUpdates.Count) Dell driver/firmware update(s) available - apply via Dell Command | Update"
+            } elseif ($scanRc -eq 0) {
+                # rc 0 but no parseable report - updates exist, names unknown
+                $drvVerdict = 'ATTENTION'
+                $drvDetails += New-Detail "Dell: updates are available (dcu-cli rc=0) but the report XML was not found - open Dell Command | Update to see them." 'warn'
+                $drvIssues += "Dell driver/firmware updates available - apply via Dell Command | Update"
+            } else {
+                $drvDetails += New-Detail "Dell Command Update scan returned rc=$scanRc. Check Dell logs (C:\ProgramData\Dell\UpdateService\Log)." 'warn'
             }
         } catch {
             $drvDetails += New-Detail "Dell scan error: $($_.Exception.Message)" 'warn'
+        } finally {
+            # Scan artifacts are ours - clean up so TEMP doesn't accumulate.
+            try { Remove-Item -LiteralPath $dcuReportDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
         }
     }
 } else {
@@ -2015,7 +2412,11 @@ if ($dsa) {
     $drvDetails += New-Detail "Intel DSA not installed - get it at intel.com/dsa if Intel driver checks are wanted." 'info'
 }
 
-$drvHeadline = if ($drvVerdict -eq 'OK') { 'Drivers current / nothing pending' } else { 'Driver updates available' }
+# v3.7: don't claim "drivers current" when we never scanned (DCU missing / non-Dell).
+$drvHeadline = if ($drvVerdict -ne 'OK') { 'Driver updates available (scan only - nothing applied)' }
+               elseif ("$mfr" -match 'Dell' -and -not $dcu) { 'Dell: not scanned (Dell Command Update not installed)' }
+               elseif ("$mfr" -match 'Dell') { 'Dell drivers current / nothing pending' }
+               else { 'Non-Dell hardware - no vendor scan performed' }
 Add-Finding -Section "Driver updates (Dell/Intel)" -Verdict $drvVerdict `
             -Headline $drvHeadline `
             -Details $drvDetails -Issues $drvIssues
@@ -2050,6 +2451,13 @@ $txt += "============================================================"
 $txt += ""
 $txt += "SUMMARY"
 $txt += "-------"
+# v3.7: one-line overall verdict (worst section wins) ahead of the per-section list
+$txtCrit = @($Findings | Where-Object { $_.Verdict -eq 'CRITICAL'  }).Count
+$txtAttn = @($Findings | Where-Object { $_.Verdict -eq 'ATTENTION' }).Count
+$txtOk   = @($Findings | Where-Object { $_.Verdict -eq 'OK'        }).Count
+$txtOverall = if ($txtCrit -gt 0) { 'CRITICAL' } elseif ($txtAttn -gt 0) { 'ATTENTION' } else { 'OK' }
+$txt += "  OVERALL: $txtOverall  ($txtCrit critical, $txtAttn attention, $txtOk ok)"
+$txt += ""
 foreach ($f in $Findings) {
     $marker = switch ($f.Verdict) { 'CRITICAL' {'[CRIT]'} 'ATTENTION' {'[ATTN]'} default {'[ OK ]'} }
     $txt += ("  {0} {1,-22} {2}" -f $marker, $f.Section, $f.Headline)
@@ -2081,6 +2489,18 @@ $txt -join "`r`n" | Set-Content -Path $ReportTxt -Encoding UTF8
 
 #region --- Write HTML report -----------------------------------------------
 
+# v3.7: System.Web must be loaded BEFORE the first HtmlEncode call below. It
+# used to sit at the bottom of this region, after every encode had already
+# run - which only worked when something else had happened to load the
+# assembly first. Fallback encoder covers the (rare) case the load fails.
+Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
+function ConvertTo-HtmlSafe {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    try { return [System.Web.HttpUtility]::HtmlEncode($Text) } catch { }
+    return ($Text -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '"','&quot;')
+}
+
 $verdictColor = @{
     'OK'        = '#1e8e3e'   # green
     'ATTENTION' = '#e8710a'   # orange
@@ -2100,7 +2520,7 @@ $css = @'
   .meta { color:#5f6368; font-size:13px; margin-bottom:24px; }
   .summary-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px; margin-bottom:32px; }
   .card { padding:14px 16px; border-radius:8px; border-left:4px solid; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.05); display:block; text-decoration:none; color:inherit; cursor:pointer; transition:transform 0.1s ease, box-shadow 0.1s ease; position:relative; }
-  .card::after { content:'›'; position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:24px; color:#9aa0a6; opacity:0.5; transition:opacity 0.1s, transform 0.1s; }
+  .card::after { content:'\203A'; position:absolute; right:14px; top:50%; transform:translateY(-50%); font-size:24px; color:#9aa0a6; opacity:0.5; transition:opacity 0.1s, transform 0.1s; }
   .card:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,0.12); }
   .card:hover::after { opacity:1; right:10px; }
   .card:active { transform:translateY(0); }
@@ -2215,7 +2635,7 @@ function Format-DetailLines {
             $sev  = if ($item.Severity) { [string]$item.Severity } else { 'plain' }
         }
 
-        $enc = [System.Web.HttpUtility]::HtmlEncode($text)
+        $enc = ConvertTo-HtmlSafe -Text ($text)
         switch ($sev) {
             'fail'  { $out.Add("<span class='flag-line'>$enc</span>") }
             'warn'  { $out.Add("<span class='warn-line'>$enc</span>") }
@@ -2239,6 +2659,39 @@ if ($verifyFinding) {
     foreach ($r in $rest) { $Findings.Add($r) }
 }
 
+# v3.7: Executive block - the one-glance answer a client or a tech wants
+# before the tiles: overall verdict (worst section), how many sections are
+# CRITICAL / ATTENTION / OK, and which sections are not OK. Plain HTML in
+# the same card style as the rest of the report.
+$execCrit = @($Findings | Where-Object { $_.Verdict -eq 'CRITICAL'  }).Count
+$execAttn = @($Findings | Where-Object { $_.Verdict -eq 'ATTENTION' }).Count
+$execOk   = @($Findings | Where-Object { $_.Verdict -eq 'OK'        }).Count
+$execOverall = if ($execCrit -gt 0) { 'CRITICAL' } elseif ($execAttn -gt 0) { 'ATTENTION' } else { 'OK' }
+$execColor   = $verdictColor[$execOverall]
+$execBg      = $verdictBg[$execOverall]
+$execNotOk   = @($Findings | Where-Object { $_.Verdict -ne 'OK' })
+$execSummaryText = switch ($execOverall) {
+    'CRITICAL'  { 'This machine has at least one critical finding that needs action.' }
+    'ATTENTION' { 'No critical findings, but some items need attention.' }
+    default     { 'All sections passed. No action needed.' }
+}
+$html += "<div class='exec' style='background:$execBg; border-left:4px solid $execColor; padding:16px 22px; border-radius:8px; margin-bottom:20px; box-shadow:0 1px 2px rgba(0,0,0,0.05);'>"
+$html += "<div style='font-size:12px; font-weight:700; letter-spacing:0.5px; color:#5f6368;'>OVERALL VERDICT</div>"
+$html += "<div style='font-size:24px; font-weight:700; color:$execColor; margin:2px 0 6px 0;'>$execOverall</div>"
+$html += "<div style='font-size:14px; margin-bottom:8px;'>$(ConvertTo-HtmlSafe -Text $execSummaryText)</div>"
+$html += "<div style='font-size:13px; color:#202124;'>Sections: <span class='verdict-CRITICAL' style='font-weight:600;'>$execCrit critical</span> &nbsp;|&nbsp; <span class='verdict-ATTENTION' style='font-weight:600;'>$execAttn attention</span> &nbsp;|&nbsp; <span class='verdict-OK' style='font-weight:600;'>$execOk ok</span></div>"
+if ($execNotOk.Count -gt 0) {
+    $html += "<div style='font-size:13px; margin-top:8px;'>Needs review: "
+    $execLinks = @()
+    foreach ($nf in $execNotOk) {
+        $nslug = Get-SectionSlug -Name $nf.Section
+        $execLinks += "<a href='#$nslug' class='verdict-$($nf.Verdict)' style='text-decoration:none; font-weight:600;'>$(ConvertTo-HtmlSafe -Text $nf.Section)</a>"
+    }
+    $html += ($execLinks -join ', ')
+    $html += "</div>"
+}
+$html += "</div>"
+
 # Summary cards - each card is a clickable anchor that jumps to its detail section below.
 # id='top' anchors the "back to top" links from each detail section.
 $html += "<div id='top' class='summary-grid'>"
@@ -2249,7 +2702,7 @@ foreach ($f in $Findings) {
     $html += "<a class='card' href='#$slug' style='border-left-color:$color; background:$bg;' title='Jump to details'>"
     $html += "<div class='verdict verdict-$($f.Verdict)'>$($f.Verdict)</div>"
     $html += "<div class='section'>$($f.Section)</div>"
-    $html += "<div class='headline'>$([System.Web.HttpUtility]::HtmlEncode($f.Headline))</div>"
+    $html += "<div class='headline'>$(ConvertTo-HtmlSafe -Text ($f.Headline))</div>"
     $html += "</a>"
 }
 $html += "</div>"
@@ -2261,7 +2714,7 @@ if ($topIssues) {
     $html += "<ol>"
     foreach ($t in $topIssues) {
         $slug = Get-SectionSlug -Name $t.Section
-        $html += "<li><a href='#$slug' class='sec' style='text-decoration:none;'>[$($t.Section)]</a> $([System.Web.HttpUtility]::HtmlEncode($t.Issue))</li>"
+        $html += "<li><a href='#$slug' class='sec' style='text-decoration:none;'>[$($t.Section)]</a> $(ConvertTo-HtmlSafe -Text ($t.Issue))</li>"
     }
     $html += "</ol></div>"
 }
@@ -2272,7 +2725,7 @@ foreach ($f in $Findings) {
     $slug  = Get-SectionSlug -Name $f.Section
     $html += "<div id='$slug' class='detail-section' style='border-left:4px solid $color;'>"
     $html += "<h3>$($f.Section) <span class='verdict-$($f.Verdict)' style='font-size:13px;'>[$($f.Verdict)]</span></h3>"
-    $html += "<div class='sub'>$([System.Web.HttpUtility]::HtmlEncode($f.Headline))</div>"
+    $html += "<div class='sub'>$(ConvertTo-HtmlSafe -Text ($f.Headline))</div>"
     if ($f.Details.Count -gt 0) {
         $html += "<pre>$(Format-DetailLines -Lines $f.Details)</pre>"
     }
@@ -2287,7 +2740,7 @@ $html += "<div class='footer'>iDezign Technology - Diagnostic Report - $(Get-Dat
 # Three buttons stacked vertically in bottom-right corner:
 #   ?  = show keyboard shortcuts modal
 #   !  = jump to next ATTENTION/CRITICAL section (styled if any issues exist)
-#   ↑  = scroll back to top
+#   ^  = scroll back to top (up arrow glyph)
 $html += @"
 <div class='floating-nav' id='floatingNav' role='navigation' aria-label='Report navigation'>
   <button class='floating-btn' id='btnHelp' title='Keyboard shortcuts (?)' aria-label='Show keyboard shortcuts'>?</button>
@@ -2487,9 +2940,7 @@ $html += $js
 
 $html += "</div></body></html>"
 
-# Need System.Web for HtmlEncode
-Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
-
+# (v3.7: Add-Type System.Web moved to the top of this region.)
 $html -join "`r`n" | Set-Content -Path $ReportHtml -Encoding UTF8
 
 #endregion
@@ -2537,12 +2988,18 @@ Write-Host ""
 # Open the HTML report in the default browser. Wrap in try/catch so the script
 # doesn't blow up if this happens to run on Server Core or any other system
 # without a default browser association for .html.
-Write-Host "  Opening HTML report in default browser..." -ForegroundColor DarkGray
-try {
-    Start-Process $ReportHtml -ErrorAction Stop
-} catch {
-    Write-Host "  Could not auto-open HTML: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "  Open it manually from: $ReportHtml" -ForegroundColor Yellow
+# v3.7: -NoOpen (or -Unattended, which implies it) skips the browser launch
+# so scheduled/remote runs don't pop a window on the console session.
+if ($NoOpen -or $Unattended) {
+    Write-Host "  (HTML report not auto-opened: -NoOpen/-Unattended)" -ForegroundColor DarkGray
+} else {
+    Write-Host "  Opening HTML report in default browser..." -ForegroundColor DarkGray
+    try {
+        Start-Process $ReportHtml -ErrorAction Stop
+    } catch {
+        Write-Host "  Could not auto-open HTML: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  Open it manually from: $ReportHtml" -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""
@@ -2552,6 +3009,9 @@ Write-Host ""
 # Pause so the elevated PowerShell window doesn't auto-close on script exit.
 # (Same reason we added this to the remediation script - launching via .bat
 # with Start-Process -Verb RunAs spawns a new window that closes on exit.)
-Read-Host "Press Enter to close this window"
+# v3.7: skipped in -Unattended mode so a scheduled task can actually finish.
+if (-not $Unattended) {
+    Read-Host "Press Enter to close this window"
+}
 
 #endregion

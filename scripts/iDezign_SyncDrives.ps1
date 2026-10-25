@@ -1,6 +1,6 @@
 <#
 ======================================================================
- Sync-Drives.ps1  -  Two-way folder synchronizer for Windows
+ iDezign_SyncDrives.ps1  -  Two-way folder synchronizer for Windows
 ======================================================================
 
  WHAT IT DOES
@@ -14,7 +14,10 @@
    otherwise it can't tell "this file was added here" apart from "this
    file was deleted there." The script saves a small state file
    (.syncstate.json) after every run and reads it on the next run to make
-   that distinction correctly.
+   that distinction correctly. (v3.7) The state file is written to BOTH
+   drives and is stamped with each volume's serial number, so a state file
+   from a different pair of drives is never trusted - it is treated as a
+   first run instead of turning "never seen this file" into "delete it".
 
  FIRST RUN
    On the very first run there is no prior state, so the script simply
@@ -25,14 +28,14 @@
  USAGE
    1. Just run it - the script lists your connected drives and asks you
       to pick the two to sync. No editing required.
-        powershell -ExecutionPolicy Bypass -File .\Sync-Drives.ps1 -DryRun
+        powershell -ExecutionPolicy Bypass -File .\iDezign_SyncDrives.ps1 -DryRun
    2. Always test first with -DryRun (above) to preview the actions. When
       the dry run finishes it will offer to immediately run for real.
    3. Or run live straight away by omitting -DryRun:
-        powershell -ExecutionPolicy Bypass -File .\Sync-Drives.ps1
+        powershell -ExecutionPolicy Bypass -File .\iDezign_SyncDrives.ps1
 
    Skip the prompt by passing paths directly (handy for scheduled tasks):
-        .\Sync-Drives.ps1 -DriveA "E:\" -DriveB "F:\Backup"
+        .\iDezign_SyncDrives.ps1 -DriveA "E:\" -DriveB "F:\Backup"
 
  MODES
    TWO-WAY (default): both drives kept in sync, newer file wins, deletions
@@ -44,11 +47,11 @@
      source. Nothing is ever hard-deleted; replaced/removed files are
      archived in _SyncTrash and recoverable.
      Run one-way non-interactively like:
-        .\Sync-Drives.ps1 -Mode OneWay -From "D:\" -To "F:\"
+        .\iDezign_SyncDrives.ps1 -Mode OneWay -From "D:\" -To "F:\"
    ADDITIVE (one-way, no deletes): copies new and newer files FROM -> TO,
      but never removes anything from the destination. Good for piling
      backups onto a drive without losing what's already there.
-        .\Sync-Drives.ps1 -Mode Additive -From "D:\" -To "F:\"
+        .\iDezign_SyncDrives.ps1 -Mode Additive -From "D:\" -To "F:\"
 
  DESTINATION-NEWER PROMPT (one-way modes)
    If the same file is on both drives but the DESTINATION's copy is newer
@@ -89,13 +92,26 @@ param(
 # FIRST executable statement in a PowerShell script (only comments and the
 # doc-block are allowed before it). Putting a string assignment before it
 # makes PS reject [CmdletBinding()] and the whole script fails to parse.
-$ScriptVersion = '2026.06.24-syncdrives-v1.1'
+$ScriptVersion = '2026.10.25-syncdrives-v1.2-enum-safety'
+
+# v3.7: runtime edition check (a #Requires -PSEdition line would have to go
+# above param() and break the ordering rule noted above). Windows PowerShell
+# 5.1 follows junctions/symlinks during -Recurse; PowerShell 7 does not
+# unless -FollowSymlink is passed. Same drives, different file lists.
+if ($PSVersionTable.PSEdition -and $PSVersionTable.PSEdition -ne 'Desktop') {
+    Write-Host ""
+    Write-Host "WARNING: running under PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))." -ForegroundColor Yellow
+    Write-Host "         This tool is validated on Windows PowerShell 5.1. Junction and symlink" -ForegroundColor Yellow
+    Write-Host "         handling differs on PS 7 - the scan may see a different set of files." -ForegroundColor Yellow
+    Write-Host "         Prefer: powershell.exe -ExecutionPolicy Bypass -File .\iDezign_SyncDrives.ps1" -ForegroundColor Yellow
+    Write-Host ""
+}
 
 # ---------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------
 $TrashFolderName = "_SyncTrash"          # created on each drive as needed
-$StateFileName   = ".syncstate.json"     # stored on Drive A
+$StateFileName   = ".syncstate.json"     # v3.7: stored on BOTH drives, keyed to the pair
 $LogFolderName   = "_SyncLogs"           # stored on Drive A
 $TimeStamp       = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
@@ -307,13 +323,25 @@ function Test-Excluded {
 }
 
 function Get-Index {
-    param([string]$Root, [string]$Label, [int]$ProgressId = 1)
+    param([string]$Root, [string]$Label, [int]$ProgressId = 1, [switch]$NoAbort)
     $index = @{}
     $seen = 0
     # Stream the enumeration so we can show a live count while scanning a
     # large drive (total isn't known up front, so this bar shows activity
     # and a running tally rather than a percentage).
-    Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    #
+    # v3.7: enumeration errors are no longer swallowed. If a folder can't be
+    # read (permissions, a flaky USB cable, a drive that dropped mid-scan)
+    # the files inside it simply never appear in the index - and two-way
+    # mode would then "see" them as deleted and trash the good copies on
+    # the other drive. -ErrorVariable collects every failure; any failure
+    # aborts the run. Reparse points (junctions, symlinks, OneDrive
+    # cloud-only placeholders) are skipped - they are not real content and
+    # following them double-counts or hydrates files.
+    $enumErr = @()
+    Get-ChildItem -LiteralPath $Root -Recurse -File -Force -ErrorAction SilentlyContinue -ErrorVariable enumErr |
+      Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
+      ForEach-Object {
         $seen++
         $rel = $_.FullName.Substring($Root.Length)
         if (-not (Test-Excluded $rel)) {
@@ -331,7 +359,50 @@ function Get-Index {
         }
     }
     Write-Progress -Id $ProgressId -Activity "Scanning $Label" -Completed
+
+    # v3.7: any enumeration error = incomplete index = unsafe to reconcile.
+    if ($enumErr -and $enumErr.Count -gt 0) {
+        Write-Log ("Scan of {0} hit {1} error(s) - the file list is INCOMPLETE." -f $Label, $enumErr.Count) "ERROR"
+        $shown = 0
+        foreach ($e in $enumErr) {
+            if ($shown -ge 5) { break }
+            $msg = $e.ToString()
+            if ($e.TargetObject) { $msg = "{0}  [{1}]" -f $msg, $e.TargetObject }
+            Write-Log "    $msg" "ERROR"
+            $shown++
+        }
+        if ($enumErr.Count -gt 5) { Write-Log ("    ...and {0} more." -f ($enumErr.Count - 5)) "ERROR" }
+        if ($NoAbort) {
+            Write-Log "State will NOT be saved from this incomplete scan." "WARN"
+            return $null
+        }
+        Write-Log "ABORTING - missing items must not be treated as deletions. Fix the errors (permissions, cable, drive) and re-run." "ERROR"
+        if ([Environment]::UserInteractive) {
+            Write-Host ""
+            Write-Host "Press Enter to close..." -ForegroundColor DarkGray
+            [void](Read-Host)
+        }
+        exit 1
+    }
     return $index
+}
+
+# v3.7: identify a volume so the state file can be tied to a drive PAIR.
+# Returns the NTFS/FAT volume serial for a local drive letter, or the
+# lower-cased path root for UNC paths (no serial available there).
+function Get-VolumeKey {
+    param([string]$Path)
+    $root = $null
+    try { $root = [System.IO.Path]::GetPathRoot($Path) } catch { }
+    if ([string]::IsNullOrEmpty($root)) { return "" }
+    if ($root -match '^([A-Za-z]):') {
+        $dev = ("{0}:" -f $Matches[1].ToUpper())
+        try {
+            $ld = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$dev'" -ErrorAction Stop
+            if ($ld -and $ld.VolumeSerialNumber) { return [string]$ld.VolumeSerialNumber }
+        } catch { }
+    }
+    return $root.TrimEnd('\').ToLower()
 }
 
 Write-Log "Scanning Drive A..."
@@ -344,24 +415,63 @@ Write-Log "  $($idxB.Count) files on B"
 # ---------------------------------------------------------------------
 # Load previous state (set of relative paths that existed last sync)
 # ---------------------------------------------------------------------
-$statePath = Join-Path $DriveA $StateFileName
+$statePath  = Join-Path $DriveA $StateFileName
+$statePathB = Join-Path $DriveB $StateFileName
 $prevSet = @{}
 $firstRun = $true
+
+# v3.7: the state file is only meaningful for the exact pair of drives it
+# was written from. Plug a different drive into the same letter and the old
+# state would make every file on it look "deleted" on the other side.
+$keyA = Get-VolumeKey $DriveA
+$keyB = Get-VolumeKey $DriveB
+
 if ($Mode -eq "OneWay") {
     Write-Log "One-way mirror: the destination will be made to match the source."
 } elseif ($Mode -eq "Additive") {
     Write-Log "Additive: new/updated files copied to destination; nothing on it is removed."
-} elseif (Test-Path -LiteralPath $statePath) {
-    try {
-        $raw = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+} else {
+    $stateFound    = $false
+    $stateMatched  = $false
+    $stateFromPath = $null
+    foreach ($cand in @($statePath, $statePathB)) {
+        if (-not (Test-Path -LiteralPath $cand)) { continue }
+        $stateFound = $true
+        try {
+            $raw = Get-Content -LiteralPath $cand -Raw | ConvertFrom-Json
+        } catch {
+            Write-Log "Could not read state file $cand - ignoring it." "WARN"
+            continue
+        }
+        $sA = [string]$raw.serialA
+        $sB = [string]$raw.serialB
+        # Two-way is symmetric: A/B may be picked in the other order next time.
+        $pairOk = ($sA -and $sB) -and ( (($sA -eq $keyA) -and ($sB -eq $keyB)) -or (($sA -eq $keyB) -and ($sB -eq $keyA)) )
+        if (-not $pairOk) { continue }
         foreach ($p in $raw.paths) { $prevSet[$p] = $true }
         $firstRun = $false
-        Write-Log "Loaded previous state: $($prevSet.Count) tracked files"
-    } catch {
-        Write-Log "Could not read state file; treating as first run." "WARN"
+        $stateMatched = $true
+        $stateFromPath = $cand
+        break
     }
-} else {
-    Write-Log "No previous state found - FIRST RUN (union only, no deletions)." "WARN"
+    if ($stateMatched) {
+        Write-Log "Loaded previous state: $($prevSet.Count) tracked files (from $stateFromPath)"
+    } elseif ($stateFound) {
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host "  STATE FILE DOES NOT BELONG TO THIS PAIR OF DRIVES" -ForegroundColor Yellow
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host "  A .syncstate.json was found, but it was written for different volumes" -ForegroundColor Yellow
+        Write-Host "  (or by an older version that did not record volume serials)." -ForegroundColor Yellow
+        Write-Host "  Current pair : A=$keyA  B=$keyB" -ForegroundColor Yellow
+        Write-Host "  Using it would make files it has never seen look like deletions." -ForegroundColor Yellow
+        Write-Host "  Treating this as a FIRST RUN: union only, nothing is trashed." -ForegroundColor Yellow
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Log "State file ignored (drive pair mismatch) - FIRST RUN (union only, no deletions)." "WARN"
+    } else {
+        Write-Log "No previous state found - FIRST RUN (union only, no deletions)." "WARN"
+    }
 }
 
 # ---------------------------------------------------------------------
@@ -457,6 +567,51 @@ function Confirm-DestOverwrite {
 $allRel = [System.Collections.Generic.HashSet[string]]::new()
 foreach ($k in $idxA.Keys) { [void]$allRel.Add($k) }
 foreach ($k in $idxB.Keys) { [void]$allRel.Add($k) }
+
+# ---------------------------------------------------------------------
+# v3.7: sanity gate. Count the pure deletions (not update-trashes) the
+# plan contains BEFORE touching anything. A wrong drive, a half-mounted
+# volume, or a stale state file shows up here as a flood of trash moves.
+# Over 25% of the tracked set AND more than 50 files = almost certainly
+# not what the tech intends. Require a typed YES.
+# ---------------------------------------------------------------------
+$plannedTrash = 0
+$trackedCount = 0
+if ($Mode -eq "OneWay") {
+    $trackedCount = $idxB.Count
+    foreach ($k in $idxB.Keys) { if (-not $idxA.ContainsKey($k)) { $plannedTrash++ } }
+} elseif ($Mode -eq "TwoWay" -and -not $firstRun) {
+    $trackedCount = $prevSet.Count
+    foreach ($k in $prevSet.Keys) {
+        $a = $idxA.ContainsKey($k); $b = $idxB.ContainsKey($k)
+        if ($a -xor $b) { $plannedTrash++ }
+    }
+}
+if ($plannedTrash -gt 50 -and $trackedCount -gt 0 -and $plannedTrash -gt ($trackedCount * 0.25)) {
+    $pctTrash = [int](($plannedTrash / $trackedCount) * 100)
+    Write-Log ("Plan would move {0} of {1} tracked files to trash ({2}%)." -f $plannedTrash, $trackedCount, $pctTrash) "WARN"
+    if ($DryRun) {
+        Write-Log "DRY RUN - continuing so you can review the TRASH lines below." "WARN"
+    } elseif (-not [Environment]::UserInteractive) {
+        Write-Log "This looks like a drive mismatch. Non-interactive run - ABORTING without changes." "ERROR"
+        exit 1
+    } else {
+        Write-Host ""
+        Write-Host "  This looks like a drive mismatch (wrong drive letter, drive not fully" -ForegroundColor Yellow
+        Write-Host "  mounted, or a state file from another pair). Trashed files are recoverable" -ForegroundColor Yellow
+        Write-Host "  from _SyncTrash, but this is a lot of churn." -ForegroundColor Yellow
+        $goOn = (Read-Host "  This looks like a drive mismatch. Continue? type YES").Trim()
+        if ($goOn -cne 'YES') {
+            Write-Log "Cancelled by user at sanity gate - nothing was changed." "WARN"
+            if ([Environment]::UserInteractive) {
+                Write-Host ""
+                Write-Host "Press Enter to close..." -ForegroundColor DarkGray
+                [void](Read-Host)
+            }
+            exit 1
+        }
+    }
+}
 
 $total = $allRel.Count
 $done  = 0
@@ -567,13 +722,34 @@ Write-Progress -Id 2 -Activity "Synchronizing" -Completed
 # (Only needed for two-way; one-way is a stateless mirror.)
 # ---------------------------------------------------------------------
 if (-not $DryRun -and $Mode -eq "TwoWay") {
-    $finalIdx = Get-Index -Root $DriveA -Label "Drive A (saving state)" -ProgressId 1
-    $newState = [pscustomobject]@{
-        savedUtc = (Get-Date).ToUniversalTime().ToString("o")
-        paths    = @($finalIdx.Keys)
+    # v3.7: -NoAbort - the sync already happened; if the re-scan errors we
+    # just skip saving (next run becomes a safe union) rather than exit 1.
+    $finalIdx = Get-Index -Root $DriveA -Label "Drive A (saving state)" -ProgressId 1 -NoAbort
+    if ($null -ne $finalIdx) {
+        # v3.7: stamped with both volume serials and written to BOTH drives,
+        # so whichever drive is plugged in next time carries a usable state
+        # and a foreign drive pair can never match it.
+        $newState = [pscustomobject]@{
+            savedUtc = (Get-Date).ToUniversalTime().ToString("o")
+            version  = $ScriptVersion
+            serialA  = $keyA
+            serialB  = $keyB
+            rootA    = $DriveA
+            rootB    = $DriveB
+            paths    = @($finalIdx.Keys)
+        }
+        $stateJson = $newState | ConvertTo-Json -Depth 4
+        $savedTo = @()
+        foreach ($sp in @($statePath, $statePathB)) {
+            try {
+                $stateJson | Set-Content -LiteralPath $sp -Encoding UTF8 -ErrorAction Stop
+                $savedTo += $sp
+            } catch {
+                Write-Log "Could not write state file $sp : $($_.Exception.Message)" "WARN"
+            }
+        }
+        Write-Log ("State saved: {0} files -> {1}" -f $finalIdx.Count, ($savedTo -join ' ; '))
     }
-    $newState | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $statePath -Encoding UTF8
-    Write-Log "State saved: $($finalIdx.Count) files"
 }
 
 # ---------------------------------------------------------------------

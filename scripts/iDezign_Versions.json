@@ -1,19 +1,19 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-07-03",
-  "toolkitVersion": "3.5",
+  "manifestUpdated": "2026-10-25",
+  "toolkitVersion": "3.7",
   "scripts": {
-    "iDezign_Common.psm1": "2026.07.03-v3.4.4-admingroup-cim",
-    "iDezign_Cleanup_Utility.ps1": "2026.07.03-v3.5-scan-split-auto-defaults",
-    "iDezign_Diagnostics.ps1": "2026.07.01-v3.1.1-tv-url",
-    "iDezign_Remediation.ps1": "2026.06.30-v3.0-pdf-merge",
-    "iDezign_Reset_to_OOBE.ps1": "2026.05.18-staging-freshness",
-    "iDezign_Toolkit_GUI.ps1": "2026.07.03-gui-v2.9.4-virusscan-row",
-    "iDezign_Migration_Utility.ps1": "2026.07.03-v3.4.1-migrate-space-safe",
-    "iDezign_DISM.ps1": "2026.06.23-dism-v1.1",
-    "iDezign_SyncDrives.ps1": "2026.06.24-syncdrives-v1.1",
-    "iDezign_Duplicate.ps1": "2026.07.01-v3.3-duplicate-v1",
-    "iDezign_VirusScan.ps1": "2026.07.03-virusscan-v1.0"
+    "iDezign_Common.psm1": "2026.10.25-v3.7-args-quoting",
+    "iDezign_Cleanup_Utility.ps1": "2026.10.25-v3.7-resume-fix-26h2",
+    "iDezign_Diagnostics.ps1": "2026.10.25-v3.7-honest-verdicts",
+    "iDezign_Remediation.ps1": "2026.10.25-v3.7-real-fixes",
+    "iDezign_Reset_to_OOBE.ps1": "2026.10.25-reset-v1.1-bitlocker-check",
+    "iDezign_Toolkit_GUI.ps1": "2026.10.25-gui-v3.0-update-check",
+    "iDezign_Migration_Utility.ps1": "2026.10.25-migrate-v2.2-skip-fix",
+    "iDezign_DISM.ps1": "2026.10.25-dism-v1.2-sfc-encoding",
+    "iDezign_SyncDrives.ps1": "2026.10.25-syncdrives-v1.2-enum-safety",
+    "iDezign_Duplicate.ps1": "2026.10.25-duplicate-v1.1-root-mirror-guards",
+    "iDezign_VirusScan.ps1": "2026.10.25-virusscan-v1.1-desktop-kfm"
   },
   "tools": [
     {

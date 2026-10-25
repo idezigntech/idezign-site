@@ -10,27 +10,43 @@
 #   * Initial prompts. Answers persisted to state.json for resume-after-update.
 #
 #   0.  Windows Update loop  (auto-reboot + auto-resume)
-#   0b. Pending-reboot sanity check (NEW): if CBS / WU / pending.xml flag any
+#       v3.7: software-only scan (-UpdateType Software -NotCategory Upgrades)
+#       + a separate best-effort driver pass; FAILED updates are reported in
+#       yellow; the 60-min timeout waits for TiWorker/TrustedInstaller to
+#       settle before moving on.
+#   0b. Pending-reboot sanity check: if CBS / WU / pending.xml flag any
 #       pending operations after the update loop, reboot once more before
 #       continuing. This prevents DISM error 0x800f0806 in Phase 2.
 #   1.  Install software + config (optional):
 #        a. Google Chrome (Enterprise MSI, silent)
 #        b. Chrome as default browser for NEW profiles (AUTO with a. - v3.5)
-#        c. Claude Desktop (MSIX, machine-wide)
+#        c. Claude Desktop (winget first, MSIX fallback - v3.7; VMP feature
+#           is enabled in Preflight so its reboot is absorbed by the WU loop)
 #        d. Malwarebytes installer (download + optional silent install - v3.5)
 #        e. iDezign-branded TeamViewer Host (silent install)
 #        f. Power settings (HDD never, display 1hr, no sleep/hibernate)
-#        g. Open-Shell classic Start Menu (Ninite; iDezign Win7 defaults AUTO - v3.5)
+#        g. Open-Shell classic Start Menu (Ninite, winget fallback - v3.7)
 #        h. Network -> Private + File/Print sharing + discovery
 #        i. Defender scan: MOVED to standalone iDezign_VirusScan.ps1 (v3.5)
-#        j. Defender exclusions for Dentrix/SQL paths
+#        j. Defender exclusions for Dentrix/SQL paths (+ verify / Tamper
+#           Protection warning - v3.7)
 #        k. Nuke OneDrive (uninstall + block reinstall + restore folders)
 #           + optional Teams personal removal + Microsoft nag disable
+#           (v3.7: 26H2 policies - settings sync/Backup OFF, Recall/AI off,
+#            Copilot + New Outlook removal, Start menu recommendations off)
 #  2.  Cleanup (temp, Windows.old, event logs, DISM, etc.)
+#      2c. Imaging-prep tweaks. v3.7: DHCP reset is skipped on static IP when
+#          a remote session (RDP/TeamViewer/AnyDesk) is detected; static
+#          config is also saved to static_ip_backup_<adapter>.txt. Teams
+#          removal is gated on the prompt and never touches MSTeams.
 #  3.  Ensure REPAIR admin account exists (always runs)
 #  4.  Rename user account     (optional)
 #  5.  Rename computer         (optional)
 #  6.  Final reboot prompt
+#
+#  v3.7 resume chain: the resume ScheduledTask runs as the interactive admin
+#  who started the run (not SYSTEM), always points at the STAGED copy, and
+#  RunOnce is only written when task registration fails (no double launch).
 #
 #  REMINDER: delete C:\iDezign_Cleanup_Utility before capturing the image:
 #      Remove-Item C:\iDezign_Cleanup_Utility -Recurse -Force
@@ -59,7 +75,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.07.03-v3.5-scan-split-auto-defaults'
+$ScriptVersion = '2026.10.25-v3.7-resume-fix-26h2'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -153,7 +169,13 @@ if (Get-Command Invoke-iDezignSelfStage -ErrorAction SilentlyContinue) {
 # These are the same flags Microsoft uses internally to decide whether to gate
 # CBS operations. Hitting DISM with any of these set is the #1 cause of
 # 0x800f0806 "The operation could not be completed due to pending operations".
+#
+# v3.7: only define the local copy when iDezign_Common.psm1 did NOT provide
+# Test-PendingReboot. The module version also detects EnablePending /
+# DisablePending optional features (e.g. VirtualMachinePlatform), which this
+# local fallback does not - so the module version must win when present.
 
+if (-not (Get-Command Test-PendingReboot -ErrorAction SilentlyContinue)) {
 function Test-PendingReboot {
     $signals = @()
 
@@ -189,6 +211,7 @@ function Test-PendingReboot {
 
     return $signals
 }
+} # end v3.7 guard: local Test-PendingReboot only when module did not supply it
 
 #endregion
 
@@ -604,9 +627,11 @@ if (-not $ResumeAfterUpdate) {
     $doStripTeamsPersonal = $false
     $doStripMSnags        = $false
     if ($doNukeOneDrive) {
-        $answer = Read-Host "  Also remove Teams personal version chat icon? (Y/N)"
+        # v3.7: this answer now also gates Phase 2c-3. Only the consumer
+        # 'MicrosoftTeams' package is removed - work/school 'MSTeams' is kept.
+        $answer = Read-Host "  Also remove consumer Teams (personal chat app)? Work/school Teams is NEVER removed. (Y/N)"
         $doStripTeamsPersonal = $answer -match '^(y|yes)$'
-        $answer = Read-Host "  Also disable 'Get more out of Windows' nags + Windows Backup prompts? (Y/N)"
+        $answer = Read-Host "  Also disable 'Get more out of Windows' nags + Windows Backup/sync, Recall, Copilot, New Outlook (26H2 policies)? (Y/N)"
         $doStripMSnags = $answer -match '^(y|yes)$'
     }
 
@@ -683,8 +708,8 @@ if (-not $ResumeAfterUpdate) {
     # OneDrive nuke summary with sub-option indicators
     $odSummary = if ($doNukeOneDrive) {
         $extras = @()
-        if ($doStripTeamsPersonal) { $extras += 'Teams' }
-        if ($doStripMSnags)        { $extras += 'nags' }
+        if ($doStripTeamsPersonal) { $extras += 'consumer Teams only' }
+        if ($doStripMSnags)        { $extras += 'nags + 26H2 policies' }
         if ($extras.Count -gt 0)   { "YES (+ $($extras -join '/'))" } else { 'YES' }
     } else { 'NO' }
     Write-Host ("  Nuke OneDrive   : " + $odSummary)
@@ -728,6 +753,12 @@ if (-not $ResumeAfterUpdate) {
             $newComputerName    = [string]$state.NewComputerName
             $doRenameUser       = [bool]$state.DoRenameUser
             $newUserName        = [string]$state.NewUserName
+
+            # v3.7: the resume task now runs as the user who STARTED the run,
+            # but belt-and-suspenders: if it ever fires under a different
+            # account (RunOnce fallback, tech logged in as REPAIR), Phase 4
+            # must still rename the ORIGINAL account, not whoever is logged in.
+            if ($state.OriginalUser) { $CurrentUser = [string]$state.OriginalUser }
 
             # Handle older state files that don't have these fields yet.
             # Each Add-Member is idempotent if the field already exists with -Force.
@@ -783,6 +814,12 @@ if (-not $ResumeAfterUpdate) {
             $doSetNetworkPrivate = $false; $doDentrixExclusions = $false
             $doNukeOneDrive = $false; $doStripTeamsPersonal = $false; $doStripMSnags = $false
             $doRenameComputer = $false; $doRenameUser = $false
+            # v3.7: seed a minimal state object so Phase 0b's
+            # $state.PendingRebootRetries / $state.SkipResetBase writes cannot
+            # null-deref. Without this, a corrupt state.json on a machine with
+            # pending CBS ops meant the retry counter never persisted and the
+            # script rebooted forever. PreflightDone=$true: we are mid-run.
+            $state = [PSCustomObject]@{ PendingRebootRetries = 0; SkipResetBase = $null; PreflightDone = $true }
         }
     } else {
         Write-Host "WARNING: state file not found - optional phases will be skipped." -ForegroundColor Yellow
@@ -790,16 +827,24 @@ if (-not $ResumeAfterUpdate) {
         $doInstallClaude = $false; $doDownloadMWB = $false; $doInstallMWB = $false; $doInstallTV = $false
         $doConfigurePower = $false
         $doInstallOpenShell = $false; $doApplyOpenShellDefaults = $false
+        $doInstallVendorDrivers = $false
         $doSetNetworkPrivate = $false; $doDentrixExclusions = $false
         $doNukeOneDrive = $false; $doStripTeamsPersonal = $false; $doStripMSnags = $false
         $doRenameComputer = $false; $doRenameUser = $false
+        # v3.7: same null-deref guard as the parse-failure branch above.
+        $state = [PSCustomObject]@{ PendingRebootRetries = 0; SkipResetBase = $null; PreflightDone = $true }
     }
 }
 
-# Helper to write current $state back to disk after any field change
+# Helper to write current $state back to disk after any field change.
+# v3.7: also a no-op if $StateFile is unset - never throw from a state save.
 function Save-State {
-    if ($script:state) {
-        $script:state | ConvertTo-Json | Set-Content -Path $script:StateFile -Encoding UTF8
+    if ($script:state -and $script:StateFile) {
+        try {
+            $script:state | ConvertTo-Json | Set-Content -Path $script:StateFile -Encoding UTF8 -ErrorAction Stop
+        } catch {
+            Write-Host "  (could not save state: $($_.Exception.Message))" -ForegroundColor DarkYellow
+        }
     }
 }
 
@@ -927,26 +972,67 @@ $ResumeTaskName = 'iDezign_Cleanup_Resume'
 #     declines, resume dies silently.
 #   * AV/EDR blocks powershell.exe launched from RunOnce.
 #
-# New behavior registers a ScheduledTask with AtLogOn trigger, running as
-# SYSTEM with the highest privileges. The task waits for ANY user to
-# interactively log on, then re-launches the script -ResumeAfterUpdate
-# elevated. RunOnce is kept as a fallback in case ScheduledTasks is
-# corrupted or ExecutionPolicy blocks the task action.
+# New behavior registers a ScheduledTask with AtLogOn trigger, running with
+# the highest privileges. The task waits for the user to interactively log
+# on, then re-launches the script -ResumeAfterUpdate elevated.
+#
+# v3.7 changes (field failures from the v3.5/v3.6 runs):
+#   * Principal is the INTERACTIVE ADMIN who started the run, not SYSTEM.
+#     A SYSTEM task has no desktop/console on the user's session (the window
+#     never appeared, the tech thought it hung), $env:USERNAME resolves to
+#     the machine name so the user-rename phase targeted the wrong account,
+#     and HKCU writes (Open-Shell defaults, nags, Chrome bookmarks) landed in
+#     the SYSTEM hive. Interactive + RunLevel Highest = elevated console on
+#     the tech's own desktop at next logon.
+#   * RunOnce is written ONLY when task registration fails. Writing both
+#     launched TWO elevated instances at logon which fought over state.json
+#     and the transcript.
+#   * The action always points at the STAGED copy. Invoke-iDezignSelfStage
+#     deliberately does not re-launch when the NAS/USB source is current, so
+#     $ScriptPath can legitimately be a UNC/removable path at this point;
+#     that path is not mounted at logon and the resume silently died.
 # ----------------------------------------------------------------------------
 
 function Set-ResumeRunOnce {
-    # 1) Primary: ScheduledTask with AtLogOn trigger, elevated as SYSTEM
+    # v3.7: make sure the staged copy exists and is current, and always hand
+    # the resume mechanism THAT path (never the launch path).
+    $resumePath = $StagedPath
+    try {
+        if ($ScriptPath -ne $StagedPath) {
+            if (-not (Test-Path -LiteralPath $StagingDir)) {
+                New-Item -Path $StagingDir -ItemType Directory -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $ScriptPath -Destination $StagedPath -Force -ErrorAction Stop
+            # Module alongside the script, if we have one, so the staged copy
+            # keeps its helpers after the reboot.
+            $srcMod = Join-Path (Split-Path $ScriptPath -Parent) 'iDezign_Common.psm1'
+            if (Test-Path -LiteralPath $srcMod) {
+                Copy-Item -LiteralPath $srcMod -Destination (Join-Path $StagingDir 'iDezign_Common.psm1') -Force -ErrorAction SilentlyContinue
+            }
+            Write-Host "  Staged current script to $StagedPath for resume." -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host "  Could not refresh staged copy ($($_.Exception.Message)) - using launch path for resume." -ForegroundColor Yellow
+        $resumePath = $ScriptPath
+    }
+    if (-not (Test-Path -LiteralPath $resumePath)) { $resumePath = $ScriptPath }
+
+    # 1) Primary: ScheduledTask with AtLogOn trigger, elevated, as the current
+    #    interactive admin (the account that launched this run).
     $taskOk = $false
     try {
         # Clean up any stale registration first
         Unregister-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
         $action    = New-ScheduledTaskAction -Execute 'powershell.exe' `
-                        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$ScriptPath`" -ResumeAfterUpdate"
+                        -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$resumePath`" -ResumeAfterUpdate"
         $trigger   = New-ScheduledTaskTrigger -AtLogOn
         # Small delay lets the shell finish initializing so console appears cleanly
         $trigger.Delay = 'PT10S'
-        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+        # v3.7: run as the launching admin (SID, so a later rename of the
+        # account does not break the lookup), interactive, highest privileges.
+        $curSid    = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $principal = New-ScheduledTaskPrincipal -UserId $curSid -LogonType Interactive -RunLevel Highest
         $settings  = New-ScheduledTaskSettingsSet `
                         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
                         -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
@@ -956,23 +1042,28 @@ function Set-ResumeRunOnce {
                                -Principal $principal -Settings $settings `
                                -Description 'Resume iDezign Cleanup after Windows Update reboot' `
                                -Force -ErrorAction Stop | Out-Null
-        Write-Host "  ScheduledTask registered - script auto-resumes as SYSTEM at next login." -ForegroundColor DarkGray
+        Write-Host "  ScheduledTask registered - script auto-resumes (elevated, as $env:USERNAME) at next login." -ForegroundColor DarkGray
         $taskOk = $true
     } catch {
         Write-Host "  ScheduledTask registration failed: $($_.Exception.Message)" -ForegroundColor Yellow
         Write-Host "  Falling back to RunOnce (may require UAC prompt)." -ForegroundColor Yellow
     }
 
-    # 2) Belt-and-suspenders: also register RunOnce so if the ScheduledTask
-    # trigger doesn't fire (task subsystem broken / policy), the classic path
-    # still gives us a shot at resume.
-    try {
-        $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -ResumeAfterUpdate"
-        New-ItemProperty -Path $RunOnceKey -Name $RunOnceName -Value $cmd -PropertyType String -Force | Out-Null
-        if (-not $taskOk) {
+    # 2) Fallback ONLY: RunOnce when the task could not be registered. v3.7:
+    #    never both - two resume triggers meant two concurrent instances.
+    if (-not $taskOk) {
+        try {
+            $cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$resumePath`" -ResumeAfterUpdate"
+            New-ItemProperty -Path $RunOnceKey -Name $RunOnceName -Value $cmd -PropertyType String -Force | Out-Null
             Write-Host "  RunOnce registered - script will resume after next login." -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  RunOnce registration failed too: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "  After reboot, re-run manually: powershell -File `"$resumePath`" -ResumeAfterUpdate" -ForegroundColor Yellow
         }
-    } catch { }
+    } else {
+        # Make sure no stale RunOnce from an older version is still lurking.
+        Remove-ItemProperty -Path $RunOnceKey -Name $RunOnceName -ErrorAction SilentlyContinue
+    }
 }
 
 function Clear-ResumeRunOnce {
@@ -1013,7 +1104,7 @@ if (-not $ResumeAfterUpdate -and $state -and -not $state.PreflightDone) {
         $chromeMsi = Join-Path $StagingDir 'chrome_enterprise64.msi'
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeMsi -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeMsi -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop  # v3.7: timeout
             $sizeMB = [math]::Round((Get-Item $chromeMsi).Length / 1MB, 1)
             Write-Host "  Downloaded Chrome MSI: $sizeMB MB" -ForegroundColor DarkGray
 
@@ -1082,7 +1173,7 @@ if (-not $ResumeAfterUpdate -and $state -and -not $state.PreflightDone) {
         $mwbDownloaded = $false
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop  # v3.7: timeout
             $sizeMB = [math]::Round((Get-Item $mwbFile).Length / 1MB, 1)
             Write-Host "  Downloaded MBSetup.exe: $sizeMB MB" -ForegroundColor Green
             Write-Host "  Location: $mwbFile" -ForegroundColor DarkGray
@@ -1122,6 +1213,32 @@ if (-not $ResumeAfterUpdate -and $state -and -not $state.PreflightDone) {
         }
     }
 
+    # --- Preflight: VirtualMachinePlatform feature (for Claude Desktop/Cowork) ---
+    # v3.7: moved here from Phase 1c. Enabling an optional feature sets CBS
+    # RebootPending / "Feature EnablePending". When this ran AFTER the WU loop
+    # (Phase 1c), nothing rebooted between it and Phase 2, so Test-PendingReboot
+    # flagged it and DISM /resetbase was skipped on every Claude install.
+    # Doing it BEFORE the update loop means the WU reboots absorb it for free.
+    # The Claude package install itself stays in Phase 1c.
+    if ($doInstallClaude -and -not $IsServer) {
+        Write-Host "`n  [Preflight/VMP] Enabling VirtualMachinePlatform feature (needed for Cowork)..." -ForegroundColor Green
+        try {
+            $vmp = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -ErrorAction Stop
+            if ($vmp -and $vmp.State -eq 'Enabled') {
+                Write-Host "  VirtualMachinePlatform already enabled." -ForegroundColor DarkGray
+            } else {
+                $vmpRes = Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart -ErrorAction Stop
+                if ($vmpRes -and $vmpRes.RestartNeeded) {
+                    Write-Host "  VirtualMachinePlatform enabled - restart pending (will be cleared by the update-loop reboot)." -ForegroundColor DarkGray
+                } else {
+                    Write-Host "  VirtualMachinePlatform enabled." -ForegroundColor DarkGray
+                }
+            }
+        } catch {
+            Write-Host "  (non-fatal) Could not enable VirtualMachinePlatform: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+    }
+
     # Mark preflight done so the old Phase 1a/1b/1d blocks skip
     if ($null -eq $state.PreflightDone) {
         $state | Add-Member -NotePropertyName 'PreflightDone' -NotePropertyValue $true -Force
@@ -1144,8 +1261,18 @@ if (-not $skipUpdates) {
         Write-Host "`n  Update pass #$pass - scanning for available updates..." -ForegroundColor Cyan
 
         $scanFailed = $false
+        # v3.7: scan SOFTWARE only and exclude the 'Upgrades' category.
+        #   * PSWindowsUpdate issue #76: OEM driver metadata (Dell/HP/Intel
+        #     entries with malformed category data) makes the WU agent throw
+        #     E_INVALIDARG "Value does not fall within the expected range" on
+        #     an unfiltered scan - on those boxes the OLD code failed every
+        #     pass and left the machine unpatched. Drivers get their own
+        #     best-effort pass after the loop.
+        #   * Feature upgrades (25H2 -> 26H2 enablement / full feature update)
+        #     are multi-GB and blow the 60-min install budget; they are
+        #     intentionally left to the tech / Settings > Windows Update.
         try {
-            $updates = Get-WindowsUpdate -MicrosoftUpdate -ErrorAction Stop
+            $updates = Get-WindowsUpdate -MicrosoftUpdate -UpdateType Software -NotCategory 'Upgrades' -ErrorAction Stop
         } catch {
             Write-Host "  Get-WindowsUpdate failed: $($_.Exception.Message)" -ForegroundColor Red
             # v3.4.2: "Value does not fall within the expected range" is a known
@@ -1166,12 +1293,12 @@ if (-not $skipUpdates) {
             }
             Start-Sleep -Seconds 5
             try {
-                $updates = Get-WindowsUpdate -MicrosoftUpdate -ErrorAction Stop
+                $updates = Get-WindowsUpdate -MicrosoftUpdate -UpdateType Software -NotCategory 'Upgrades' -ErrorAction Stop
                 Write-Host "  Retry with -MicrosoftUpdate succeeded." -ForegroundColor Green
             } catch {
                 Write-Host "  Retry failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
                 try {
-                    $updates = Get-WindowsUpdate -ErrorAction Stop
+                    $updates = Get-WindowsUpdate -UpdateType Software -NotCategory 'Upgrades' -ErrorAction Stop
                     Write-Host "  Fallback scan (Windows Update only, no Microsoft Update) succeeded." -ForegroundColor Green
                 } catch {
                     Write-Host "  Fallback scan failed too: $($_.Exception.Message)" -ForegroundColor Red
@@ -1219,7 +1346,9 @@ if (-not $skipUpdates) {
                 # Stream each update result object as it completes. PSWindowsUpdate
                 # emits one object per update as it moves through Download/Install,
                 # so piping to ForEach lets us log each status transition live.
-                Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -Confirm:$false -ErrorAction SilentlyContinue |
+                # v3.7: same Software / no-Upgrades filter as the scan, otherwise
+                # the install step would happily pull the feature upgrade anyway.
+                Install-WindowsUpdate -MicrosoftUpdate -UpdateType Software -NotCategory 'Upgrades' -AcceptAll -IgnoreReboot -Confirm:$false -ErrorAction SilentlyContinue |
                     ForEach-Object {
                         $line = "{0} | {1} | {2}" -f $_.Status, $_.KB, $_.Title
                         Add-Content -Path $ProgressFile -Value $line -ErrorAction SilentlyContinue
@@ -1301,14 +1430,48 @@ if (-not $skipUpdates) {
             }
         }
         Remove-Job -Job $installJob -Force -ErrorAction SilentlyContinue
-        if (Test-Path $progressFile) { Remove-Item $progressFile -Force -ErrorAction SilentlyContinue }
+
+        # v3.7: count per-update FAILED lines before the progress file goes
+        # away. The old code printed a green "Install pass complete" even when
+        # every update in the pass had failed (the job itself exits cleanly).
+        $failedCount = 0
+        if (Test-Path $progressFile) {
+            try {
+                $failedCount = @(Get-Content $progressFile -ErrorAction SilentlyContinue |
+                                 Where-Object { $_ -like 'Failed*' }).Count
+            } catch { $failedCount = 0 }
+            Remove-Item $progressFile -Force -ErrorAction SilentlyContinue
+        }
 
         $totalElapsed = '{0:mm\:ss}' -f ((Get-Date) - $installStart)
         if ($installTimedOut) {
             Write-Host "  Install pass timed out after $totalElapsed. Skipping remaining passes." -ForegroundColor Red
+            # v3.7: stopping the job does NOT stop TrustedInstaller/TiWorker -
+            # the CU is usually still being applied in the background. Running
+            # straight into Phase 0b / DISM while CBS is mid-transaction is how
+            # we got 0x800f0806 and half-installed CUs. Give the servicing
+            # stack up to 10 more minutes to settle before moving on.
+            $settleStart = Get-Date
+            $settled     = $false
+            while (((Get-Date) - $settleStart).TotalMinutes -lt 10) {
+                $busyProcs = @(Get-Process -Name TiWorker,TrustedInstaller -ErrorAction SilentlyContinue)
+                $wuSvc     = Get-Service -Name wuauserv -ErrorAction SilentlyContinue
+                $wuState   = if ($wuSvc) { [string]$wuSvc.Status } else { 'n/a' }
+                if ($busyProcs.Count -eq 0) { $settled = $true; break }
+                $waited = '{0:mm\:ss}' -f ((Get-Date) - $settleStart)
+                Write-Host "    waiting for servicing stack to settle: $($busyProcs.Name -join ', ') still running, wuauserv=$wuState (waited $waited of 10:00)" -ForegroundColor DarkYellow
+                Start-Sleep -Seconds 30
+            }
+            if ($settled) {
+                Write-Host "  Servicing stack idle - continuing." -ForegroundColor DarkGray
+            } else {
+                Write-Host "  TiWorker/TrustedInstaller STILL busy after 10 min - continuing anyway; Phase 0b will reboot if CBS is pending." -ForegroundColor Yellow
+            }
             break
         } elseif ($installError) {
             Write-Host "  Install pass finished with errors after $totalElapsed : $installError" -ForegroundColor Yellow
+        } elseif ($failedCount -gt 0) {
+            Write-Host "  $failedCount of $($updates.Count) updates FAILED after $totalElapsed - see transcript for which ones." -ForegroundColor Yellow
         } else {
             Write-Host "  Install pass complete in $totalElapsed." -ForegroundColor Green
         }
@@ -1318,7 +1481,7 @@ if (-not $skipUpdates) {
 
         if ($needsReboot) {
             Write-Host "`n  Reboot required to continue Windows Update loop." -ForegroundColor Yellow
-            Set-ResumeRunOnce  # RunOnce is registered EITHER way - so script resumes whenever reboot happens
+            Set-ResumeRunOnce  # resume trigger is registered EITHER way - so script resumes whenever reboot happens
 
             $rebooted = $false
             if (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
@@ -1361,6 +1524,50 @@ if (-not $skipUpdates) {
 
     if ($pass -ge $maxPasses) {
         Write-Host "  Hit max pass limit ($maxPasses). Continuing anyway - check Windows Update manually after imaging." -ForegroundColor Yellow
+    }
+
+    # --- v3.7: ONE best-effort driver pass, separate from the software loop ---
+    # Drivers are scanned on their own so the known PSWindowsUpdate driver-
+    # metadata bug (issue #76 - OEM entries throw ArgumentException /
+    # E_INVALIDARG) can never take the whole software loop down with it. If
+    # it throws here we just say so and move on; Dell Command Update / HP SA
+    # (Phase 1l) are the better driver channel anyway. -IgnoreReboot: any
+    # driver reboot is picked up by the Phase 0b pending-reboot check.
+    Write-Host "`n  Driver pass (best-effort, one shot)..." -ForegroundColor Cyan
+    try {
+        $drvUpdates = @(Get-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -ErrorAction Stop)
+        if ($drvUpdates.Count -eq 0) {
+            Write-Host "  No driver updates offered." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Found $($drvUpdates.Count) driver update(s):" -ForegroundColor Cyan
+            $drvUpdates | ForEach-Object { Write-Host "    - $($_.Title)" -ForegroundColor DarkGray }
+            # 20-min cap via the module job helper when present - a wedged OEM
+            # driver install must not hang the whole run.
+            $drvResult = $null
+            if (Get-Command Invoke-WithJobTimeout -ErrorAction SilentlyContinue) {
+                $drvResult = Invoke-WithJobTimeout -TimeoutMinutes 20 -Label 'driver update install' -ScriptBlock {
+                    Import-Module PSWindowsUpdate -ErrorAction SilentlyContinue -Verbose:$false
+                    Install-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -AcceptAll -IgnoreReboot -Confirm:$false -ErrorAction SilentlyContinue |
+                        ForEach-Object { [string]$_.Result }
+                }
+            } else {
+                $drvResult = Install-WindowsUpdate -MicrosoftUpdate -UpdateType Driver -AcceptAll -IgnoreReboot -Confirm:$false -ErrorAction Stop |
+                                 ForEach-Object { [string]$_.Result }
+            }
+            $drvFailed = @($drvResult | Where-Object { $_ -like 'Failed*' }).Count
+            if ($drvFailed -gt 0) {
+                Write-Host "  $drvFailed of $($drvUpdates.Count) driver updates FAILED - see transcript." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Driver pass complete." -ForegroundColor Green
+            }
+        }
+    } catch {
+        $drvEx = $_.Exception
+        if ($drvEx -is [System.ArgumentException] -or $drvEx.Message -match 'expected range|E_INVALIDARG') {
+            Write-Host "  driver scan skipped (known PSWindowsUpdate driver-metadata bug) - use Dell Command Update / vendor tool for drivers." -ForegroundColor Yellow
+        } else {
+            Write-Host "  driver scan skipped: $($drvEx.Message)" -ForegroundColor Yellow
+        }
     }
 }
 
@@ -1435,6 +1642,12 @@ Clear-ResumeRunOnce
 
 $OriginalProgressPref = $ProgressPreference
 
+# v3.7: the local Get-RemoteFile is now a FALLBACK only. Previously this
+# script-scope definition shadowed the module's Get-RemoteFile, which sends a
+# browser User-Agent, follows redirects, and rejects tiny "HTML error page"
+# downloads (MinSizeBytes) - so a Ninite/TeamViewer CDN interstitial was
+# saved as the .exe and then "installed". Module version wins when present.
+if (-not (Get-Command Get-RemoteFile -ErrorAction SilentlyContinue)) {
 function Get-RemoteFile {
     param(
         [Parameter(Mandatory)] [string] $Url,
@@ -1447,7 +1660,7 @@ function Get-RemoteFile {
 
     $script:ProgressPreference = 'SilentlyContinue'
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
         $sizeMB = [math]::Round((Get-Item $OutFile).Length / 1MB, 1)
         Write-Host "  Downloaded ${DisplayName}: $sizeMB MB" -ForegroundColor DarkGray
         return $true
@@ -1458,6 +1671,7 @@ function Get-RemoteFile {
         $script:ProgressPreference = $OriginalProgressPref
     }
 }
+} # end v3.7 guard: local Get-RemoteFile only when module did not supply it
 
 # --- 1a. Google Chrome ---
 if ($doInstallChrome -and $state.PreflightDone) {
@@ -1542,24 +1756,73 @@ if ($doInstallClaude -and $IsServer) {
 } elseif ($doInstallClaude) {
     Write-Host "`n[Phase 1c] Installing Claude Desktop..." -ForegroundColor Green
 
-    Write-Host "  Enabling VirtualMachinePlatform feature (needed for Cowork)..." -ForegroundColor DarkGray
-    try {
-        Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
-    } catch {
-        Write-Host "  (non-fatal) Could not enable VirtualMachinePlatform: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    # v3.7: VirtualMachinePlatform is now enabled in Preflight (before the WU
+    # loop) so its pending-reboot flag is cleared by the update reboots instead
+    # of forcing DISM to skip /resetbase. Backward-compat: an old state file
+    # without PreflightDone means Preflight never ran - do it here as before.
+    if (-not $state.PreflightDone) {
+        Write-Host "  Enabling VirtualMachinePlatform feature (needed for Cowork)..." -ForegroundColor DarkGray
+        try {
+            Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
+        } catch {
+            Write-Host "  (non-fatal) Could not enable VirtualMachinePlatform: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+    } else {
+        Write-Host "  VirtualMachinePlatform: handled in Preflight." -ForegroundColor DarkGray
     }
 
-    $claudeUrl  = 'https://claude.ai/api/desktop/win32/x64/msix/latest/redirect'
-    $claudeMsix = Join-Path $StagingDir 'Claude.msix'
+    # v3.7: prefer winget (Anthropic.Claude). winget handles the current
+    # package URL, signature and dependencies, and the claude.ai redirect
+    # endpoint has changed shape more than once. Fall back to the MSIX
+    # redirect download + Add-AppxProvisionedPackage when winget is missing
+    # or the install fails.
+    $claudeInstalled = $false
+    if (Ensure-Winget) {
+        Write-Host "  Installing via winget (Anthropic.Claude, timeout 15 min)..." -ForegroundColor DarkGray
+        $wgExe = (Get-Command winget -ErrorAction SilentlyContinue).Source
+        if (-not $wgExe) { $wgExe = 'winget.exe' }
+        $wgArgs = @('install','--id','Anthropic.Claude','--exact','--silent',
+                    '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
+        $wgRc = $null
+        if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+            $wgRc = Start-ProcessWithTimeout -FilePath $wgExe -ArgumentList $wgArgs `
+                        -TimeoutMinutes 15 -Label 'winget install Anthropic.Claude'
+        } else {
+            try {
+                $p = Start-Process -FilePath $wgExe -ArgumentList $wgArgs -Wait -PassThru -NoNewWindow
+                $wgRc = $p.ExitCode
+            } catch {
+                Write-Host "  winget launch failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+        # -1978335189 (0x8A15002B) = already installed / no applicable upgrade
+        if ($wgRc -eq 0 -or $wgRc -eq -1978335189) {
+            Write-Host "  Claude Desktop installed via winget." -ForegroundColor DarkGray
+            $claudeInstalled = $true
+        } elseif ($wgRc -eq -1) {
+            Write-Host "  winget install TIMED OUT (>15 min) - falling back to MSIX download." -ForegroundColor Yellow
+        } else {
+            Write-Host "  winget install returned rc=$wgRc - falling back to MSIX download." -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  winget unavailable - using MSIX download." -ForegroundColor DarkGray
+    }
 
-    if (Get-RemoteFile -Url $claudeUrl -OutFile $claudeMsix -DisplayName 'Claude Desktop MSIX (x64)') {
-        try {
-            Add-AppxProvisionedPackage -Online -PackagePath $claudeMsix -SkipLicense -Regions 'all' -ErrorAction Stop | Out-Null
-            Write-Host "  Claude Desktop installed (machine-wide provisioning)." -ForegroundColor DarkGray
-        } catch {
-            Write-Host "  ERROR installing Claude Desktop: $($_.Exception.Message)" -ForegroundColor Red
-            Write-Host "  You can install manually post-image with:" -ForegroundColor Yellow
-            Write-Host "    Add-AppxProvisionedPackage -Online -PackagePath `"$claudeMsix`" -SkipLicense -Regions all" -ForegroundColor Yellow
+    if (-not $claudeInstalled) {
+        $claudeUrl  = 'https://claude.ai/api/desktop/win32/x64/msix/latest/redirect'
+        $claudeMsix = Join-Path $StagingDir 'Claude.msix'
+
+        # GET-style download (Get-RemoteFile = Invoke-WebRequest GET + follow
+        # redirects). Never HEAD: the redirect endpoint answers HEAD with 405.
+        if (Get-RemoteFile -Url $claudeUrl -OutFile $claudeMsix -DisplayName 'Claude Desktop MSIX (x64)') {
+            try {
+                Add-AppxProvisionedPackage -Online -PackagePath $claudeMsix -SkipLicense -Regions 'all' -ErrorAction Stop | Out-Null
+                Write-Host "  Claude Desktop installed (machine-wide provisioning)." -ForegroundColor DarkGray
+            } catch {
+                Write-Host "  ERROR installing Claude Desktop: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "  You can install manually post-image with:" -ForegroundColor Yellow
+                Write-Host "    Add-AppxProvisionedPackage -Online -PackagePath `"$claudeMsix`" -SkipLicense -Regions all" -ForegroundColor Yellow
+            }
         }
     }
 } else {
@@ -1602,7 +1865,7 @@ if ($doDownloadMWB -and $state.PreflightDone) {
             param($u, $o)
             $ProgressPreference = 'SilentlyContinue'
             try {
-                Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing -ErrorAction Stop
+                Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
                 return $true
             } catch {
                 return @{ Error = $_.Exception.Message }
@@ -1618,7 +1881,7 @@ if ($doDownloadMWB -and $state.PreflightDone) {
         # Fallback - no timeout helper available
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $mwbUrl -OutFile $mwbFile -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
             $downloaded = $true
         } catch {
             Write-Host "  Download failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -1655,7 +1918,7 @@ if ($doInstallTV) {
             param($u, $o)
             $ProgressPreference = 'SilentlyContinue'
             try {
-                Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing -ErrorAction Stop
+                Invoke-WebRequest -Uri $u -OutFile $o -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
                 return $true
             } catch {
                 return @{ Error = $_.Exception.Message }
@@ -1670,7 +1933,7 @@ if ($doInstallTV) {
     } else {
         try {
             $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $tvUrl -OutFile $tvExe -UseBasicParsing -ErrorAction Stop
+            Invoke-WebRequest -Uri $tvUrl -OutFile $tvExe -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
             $downloaded = $true
         } catch {
             Write-Host "  Download failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -1813,17 +2076,32 @@ if ($doInstallOpenShell) {
     $niniteUrl = 'https://ninite.com/openshell/ninite.exe'
     $niniteExe = Join-Path $StagingDir 'Ninite_OpenShell.exe'
 
-    if (Get-RemoteFile -Url $niniteUrl -OutFile $niniteExe -DisplayName 'Ninite Open-Shell installer') {
+    # Verify helper - the Open-Shell install directory is the ground truth.
+    $osPaths = @(
+        'C:\Program Files\Open-Shell',
+        'C:\Program Files (x86)\Open-Shell'
+    )
+
+    $niniteOk = Get-RemoteFile -Url $niniteUrl -OutFile $niniteExe -DisplayName 'Ninite Open-Shell installer'
+    if ($niniteOk) {
         try {
             # Ninite free installer: no command-line args needed. Just runs and
             # installs silently with a progress GUI. -Wait so we know when it's
             # done. WindowStyle Hidden suppresses the small Ninite window.
-            $rc = Start-ProcessWithTimeout `
-                    -FilePath $niniteExe `
-                    -ArgumentList '' `
-                    -TimeoutMinutes 10 -Label 'Ninite Open-Shell installer'
+            $rc = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $rc = Start-ProcessWithTimeout `
+                        -FilePath $niniteExe `
+                        -ArgumentList @() `
+                        -TimeoutMinutes 10 -Label 'Ninite Open-Shell installer'
+            } else {
+                $p = Start-Process -FilePath $niniteExe -Wait -PassThru
+                $rc = $p.ExitCode
+            }
 
-            if ($rc -eq 'TIMEOUT') {
+            # v3.7: Start-ProcessWithTimeout returns -1 on timeout (never the
+            # string 'TIMEOUT' - that branch could never fire).
+            if ($rc -eq -1) {
                 Write-Host "  Ninite installer TIMED OUT (>10 min). It may still finish in background." -ForegroundColor Red
             } elseif ($rc -eq 0) {
                 Write-Host "  Open-Shell installed successfully." -ForegroundColor DarkGray
@@ -1831,50 +2109,85 @@ if ($doInstallOpenShell) {
                 Write-Host "  Ninite installer returned exit code $rc." -ForegroundColor Yellow
                 Write-Host "  Verify via: Get-Item 'C:\Program Files\Open-Shell'" -ForegroundColor DarkGray
             }
-
-            # Verify by looking for the Open-Shell install directory
-            $osPaths = @(
-                'C:\Program Files\Open-Shell',
-                'C:\Program Files (x86)\Open-Shell'
-            )
-            $found = $osPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if ($found) {
-                Write-Host "  Verification: install found at $found" -ForegroundColor DarkGray
-            } else {
-                Write-Host "  Warning: Open-Shell directory not found after install. May have failed." -ForegroundColor DarkYellow
-            }
-
-            # --- Apply iDezign baseline Open-Shell defaults ---
-            # Best-effort registry writes for Win7-style menu + Aero skin.
-            # Writes to:
-            #   - HKEY_USERS\.DEFAULT (template for new user profiles)
-            #   - HKCU (current user, so the tech can verify by clicking Start)
-            # If registry paths are slightly off for this Open-Shell version,
-            # vanilla Open-Shell still works - we just don't get the styling.
-            if ($doApplyOpenShellDefaults) {
-                Write-Host "  Applying iDezign default Open-Shell settings..." -ForegroundColor DarkGray
-                $osRegPaths = @(
-                    'Registry::HKEY_USERS\.DEFAULT\Software\IvoSoft\ClassicStartMenu\Settings',
-                    'HKCU:\Software\IvoSoft\ClassicStartMenu\Settings'
-                )
-                foreach ($regPath in $osRegPaths) {
-                    try {
-                        if (-not (Test-Path $regPath)) {
-                            New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
-                        }
-                        # MenuStyle DWORD: 0=Classic, 1=Two columns, 2=Windows 7 style
-                        Set-ItemProperty -Path $regPath -Name 'MenuStyle' -Value 2 -Type DWord -ErrorAction Stop
-                        Set-ItemProperty -Path $regPath -Name 'SkinW7'    -Value 'Windows Aero' -Type String -ErrorAction Stop
-                        Write-Host "    Applied to: $regPath" -ForegroundColor DarkGray
-                    } catch {
-                        Write-Host "    Could not write to $regPath - $($_.Exception.Message)" -ForegroundColor DarkYellow
-                    }
-                }
-                Write-Host "  Defaults applied. New users get Win7-style menu; current user takes effect after Open-Shell restart." -ForegroundColor DarkGray
-            }
         } catch {
             Write-Host "  ERROR running Ninite installer: $($_.Exception.Message)" -ForegroundColor Red
         }
+    }
+
+    # Verify by looking for the Open-Shell install directory
+    $found = $osPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    # v3.7: winget fallback. Ninite's free installer has been returning a
+    # browser-only HTML interstitial to script downloads on some networks
+    # (Get-RemoteFile now rejects those), so when the install dir is still
+    # missing, try the winget package before giving up.
+    if (-not $found) {
+        Write-Host "  Open-Shell not found after Ninite - trying winget (Open-Shell.Open-Shell-Menu)..." -ForegroundColor DarkYellow
+        if (Ensure-Winget) {
+            $wgExe = (Get-Command winget -ErrorAction SilentlyContinue).Source
+            if (-not $wgExe) { $wgExe = 'winget.exe' }
+            $wgArgs = @('install','--id','Open-Shell.Open-Shell-Menu','--exact','--silent',
+                        '--accept-package-agreements','--accept-source-agreements','--disable-interactivity')
+            $wgRc = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $wgRc = Start-ProcessWithTimeout -FilePath $wgExe -ArgumentList $wgArgs `
+                            -TimeoutMinutes 10 -Label 'winget install Open-Shell'
+            } else {
+                try {
+                    $p = Start-Process -FilePath $wgExe -ArgumentList $wgArgs -Wait -PassThru -NoNewWindow
+                    $wgRc = $p.ExitCode
+                } catch {
+                    Write-Host "  winget launch failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
+                }
+            }
+            if ($wgRc -eq 0 -or $wgRc -eq -1978335189) {
+                Write-Host "  winget install completed." -ForegroundColor DarkGray
+            } elseif ($wgRc -eq -1) {
+                Write-Host "  winget install TIMED OUT (>10 min)." -ForegroundColor Red
+            } else {
+                Write-Host "  winget install returned rc=$wgRc." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  winget unavailable - cannot fall back." -ForegroundColor Yellow
+        }
+        $found = $osPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+
+    if ($found) {
+        Write-Host "  Verification: install found at $found" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Warning: Open-Shell directory not found after install. Install FAILED - install manually from github.com/Open-Shell/Open-Shell-Menu." -ForegroundColor Yellow
+    }
+
+    # --- Apply iDezign baseline Open-Shell defaults ---
+    # Best-effort registry writes for Win7-style menu + Aero skin.
+    # Writes to:
+    #   - HKEY_USERS\.DEFAULT (template for new user profiles)
+    #   - HKCU (current user, so the tech can verify by clicking Start)
+    # If registry paths are slightly off for this Open-Shell version,
+    # vanilla Open-Shell still works - we just don't get the styling.
+    # v3.7: only when the install actually landed - no point seeding
+    # settings for a product that is not there.
+    if ($found -and $doApplyOpenShellDefaults) {
+        Write-Host "  Applying iDezign default Open-Shell settings..." -ForegroundColor DarkGray
+        $osRegPaths = @(
+            'Registry::HKEY_USERS\.DEFAULT\Software\IvoSoft\ClassicStartMenu\Settings',
+            'HKCU:\Software\IvoSoft\ClassicStartMenu\Settings'
+        )
+        foreach ($regPath in $osRegPaths) {
+            try {
+                if (-not (Test-Path $regPath)) {
+                    New-Item -Path $regPath -Force -ErrorAction Stop | Out-Null
+                }
+                # MenuStyle DWORD: 0=Classic, 1=Two columns, 2=Windows 7 style
+                Set-ItemProperty -Path $regPath -Name 'MenuStyle' -Value 2 -Type DWord -ErrorAction Stop
+                Set-ItemProperty -Path $regPath -Name 'SkinW7'    -Value 'Windows Aero' -Type String -ErrorAction Stop
+                Write-Host "    Applied to: $regPath" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "    Could not write to $regPath - $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+        Write-Host "  Defaults applied. New users get Win7-style menu; current user takes effect after Open-Shell restart." -ForegroundColor DarkGray
     }
 } else {
     Write-Host "`n[Phase 1g] Open-Shell install: SKIPPED." -ForegroundColor DarkGray
@@ -1919,15 +2232,26 @@ if ($doSetNetworkPrivate) {
         # Without these, network shares from this PC are invisible to other
         # workstations, which breaks Dentrix multi-workstation setups and
         # general office file-sharing scenarios.
+        # v3.7: enable the EXISTING Private/Domain-scoped rules instead of
+        # Set-NetFirewallRule ... -Profile Private. "-Profile" on Set-* is a
+        # WRITE - it rewrote every rule in the group (including the Public
+        # ones) to Private-only, which left the inbound SMB rules exposed on
+        # the next hotel/coffee-shop network because the Public-profile block
+        # rules no longer existed. Filter + Enable-NetFirewallRule touches
+        # only the Enabled flag.
         try {
-            Set-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -Enabled True -Profile Private -ErrorAction Stop
+            Get-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -ErrorAction Stop |
+                Where-Object { $_.Profile -match 'Private|Domain|Any' } |
+                Enable-NetFirewallRule -ErrorAction Stop
             Write-Host "  File and Printer Sharing : ENABLED for Private profile." -ForegroundColor DarkGray
         } catch {
             Write-Host "  Could not enable File/Print Sharing: $($_.Exception.Message)" -ForegroundColor DarkYellow
         }
 
         try {
-            Set-NetFirewallRule -DisplayGroup 'Network Discovery' -Enabled True -Profile Private -ErrorAction Stop
+            Get-NetFirewallRule -DisplayGroup 'Network Discovery' -ErrorAction Stop |
+                Where-Object { $_.Profile -match 'Private|Domain|Any' } |
+                Enable-NetFirewallRule -ErrorAction Stop
             Write-Host "  Network Discovery        : ENABLED for Private profile." -ForegroundColor DarkGray
         } catch {
             Write-Host "  Could not enable Network Discovery: $($_.Exception.Message)" -ForegroundColor DarkYellow
@@ -2004,21 +2328,47 @@ if ($doDentrixExclusions) {
             # '\\DENTRIX-SRV\PDB'
         )
 
-        $allPaths = $dentrixPaths + $sqlPaths + $extraDentrixPaths
+        # v3.7: the per-instance MSSQL data/log/backup directories, per the
+        # Microsoft SQL + antivirus guidance. Wildcard covers MSSQL16.SQLEXPRESS,
+        # MSSQL15.DENTRIX etc. (Defender accepts * in one path segment.)
+        $sqlDataPaths = @(
+            'C:\Program Files\Microsoft SQL Server\*\MSSQL\DATA',
+            'C:\Program Files\Microsoft SQL Server\*\MSSQL\Backup',
+            'C:\Program Files\Microsoft SQL Server\*\MSSQL\Log'
+        )
+
+        $allPaths = $dentrixPaths + $sqlPaths + $sqlDataPaths + $extraDentrixPaths
 
         # SQL Server process exclusions - these are the active processes that
         # touch the .mdf/.ldf files during operation. Excluding the processes
         # is more efficient than path-based exclusion alone.
+        # v3.7: + sqlagent.exe (jobs/backups), SQLDumper.exe (crash dumps).
         $sqlProcesses = @(
             'sqlservr.exe',       # SQL Server database engine
+            'sqlagent.exe',       # SQL Server Agent (scheduled jobs / backups)
             'sqlbrowser.exe',     # SQL Server Browser service
             'sqlwriter.exe',      # SQL Server VSS Writer (backups)
+            'SQLDumper.exe',      # SQL Server crash/diagnostic dump utility
             'sqlceip.exe'         # SQL Server telemetry (usually fine to exclude)
         )
+
+        # Snapshot what is already there so we only add what is missing and
+        # can verify afterwards.
+        $prefBefore = $null
+        try { $prefBefore = Get-MpPreference -ErrorAction Stop } catch { }
+        $existingPaths = @(); $existingProcs = @()
+        if ($prefBefore) {
+            $existingPaths = @($prefBefore.ExclusionPath)    | ForEach-Object { [string]$_ }
+            $existingProcs = @($prefBefore.ExclusionProcess) | ForEach-Object { [string]$_ }
+        }
 
         # Add path exclusions
         Write-Host "  Adding path exclusions..." -ForegroundColor DarkGray
         foreach ($path in $allPaths) {
+            if ($existingPaths -contains $path) {
+                Write-Host "    = $path (already present)" -ForegroundColor DarkGray
+                continue
+            }
             try {
                 Add-MpPreference -ExclusionPath $path -ErrorAction Stop
                 Write-Host "    + $path" -ForegroundColor DarkGray
@@ -2030,6 +2380,10 @@ if ($doDentrixExclusions) {
         # Add process exclusions
         Write-Host "  Adding process exclusions..." -ForegroundColor DarkGray
         foreach ($proc in $sqlProcesses) {
+            if ($existingProcs -contains $proc) {
+                Write-Host "    = $proc (already present)" -ForegroundColor DarkGray
+                continue
+            }
             try {
                 Add-MpPreference -ExclusionProcess $proc -ErrorAction Stop
                 Write-Host "    + $proc" -ForegroundColor DarkGray
@@ -2038,13 +2392,33 @@ if ($doDentrixExclusions) {
             }
         }
 
-        # Show current exclusion summary for verification
+        # v3.7: VERIFY by re-reading the preference. Add-MpPreference returns
+        # success even when Tamper Protection silently drops the write - the
+        # old "counts" summary could not tell the difference. Compare what we
+        # asked for against what is actually there, and name the culprit.
         try {
             $pref = Get-MpPreference -ErrorAction Stop
-            Write-Host "  Verification - current exclusion counts:" -ForegroundColor DarkGray
-            Write-Host "    Paths    : $($pref.ExclusionPath.Count)" -ForegroundColor DarkGray
-            Write-Host "    Processes: $($pref.ExclusionProcess.Count)" -ForegroundColor DarkGray
-        } catch { }
+            $nowPaths = @($pref.ExclusionPath)    | ForEach-Object { [string]$_ }
+            $nowProcs = @($pref.ExclusionProcess) | ForEach-Object { [string]$_ }
+            $wanted   = @($allPaths) + @($sqlProcesses)
+            $missing  = @()
+            foreach ($w in $allPaths)     { if ($nowPaths -notcontains $w) { $missing += $w } }
+            foreach ($w in $sqlProcesses) { if ($nowProcs -notcontains $w) { $missing += $w } }
+            $present  = $wanted.Count - $missing.Count
+            if ($missing.Count -eq 0) {
+                Write-Host "  verified $present/$($wanted.Count) exclusions present." -ForegroundColor Green
+            } else {
+                Write-Host "  verified $present/$($wanted.Count) exclusions present - MISSING:" -ForegroundColor Yellow
+                $missing | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+                $tp = $false
+                try { $tp = [bool](Get-MpComputerStatus -ErrorAction Stop).IsTamperProtected } catch { }
+                if ($tp) {
+                    Write-Host "  Tamper Protection is ON - exclusions silently blocked; add them via Intune/MDE or temporarily disable TP and re-run." -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Write-Host "  (could not verify exclusions: $($_.Exception.Message))" -ForegroundColor DarkYellow
+        }
     }
 } else {
     Write-Host "`n[Phase 1j] Dentrix/SQL exclusions: SKIPPED." -ForegroundColor DarkGray
@@ -2190,7 +2564,10 @@ if ($doNukeOneDrive) {
     # %LOCALAPPDATA%, while older builds use per-machine in SysWOW64/System32.
     # We try all known locations.
     Write-Host "  Uninstalling OneDrive..." -ForegroundColor DarkGray
+    # v3.7: + the per-machine install (Win11 23H2+ ships OneDrive under
+    # %ProgramFiles% - the SysWOW64 copy is just the bootstrapper now).
     $uninstallers = @(
+        "$env:ProgramFiles\Microsoft OneDrive\OneDriveSetup.exe",
         "$env:SystemRoot\SysWOW64\OneDriveSetup.exe",
         "$env:SystemRoot\System32\OneDriveSetup.exe"
     )
@@ -2204,9 +2581,20 @@ if ($doNukeOneDrive) {
     foreach ($u in $uninstallers) {
         Write-Host "    Running: $u /uninstall /allusers" -ForegroundColor DarkGray
         try {
-            $proc = Start-Process -FilePath $u -ArgumentList '/uninstall','/allusers' -Wait -PassThru -ErrorAction Stop
-            if ($proc.ExitCode -ne 0) {
-                Write-Host "      Returned exit code $($proc.ExitCode) - usually fine, OneDrive uninstaller is quirky" -ForegroundColor DarkGray
+            # v3.7: 5-min cap. OneDriveSetup has been seen hanging on a hidden
+            # "sign in" dialog when a user is still signed in to OneDrive.
+            $odRc = $null
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $odRc = Start-ProcessWithTimeout -FilePath $u -ArgumentList @('/uninstall','/allusers') `
+                            -TimeoutMinutes 5 -Label 'OneDriveSetup /uninstall'
+            } else {
+                $proc = Start-Process -FilePath $u -ArgumentList '/uninstall','/allusers' -Wait -PassThru -ErrorAction Stop
+                $odRc = $proc.ExitCode
+            }
+            if ($odRc -eq -1) {
+                Write-Host "      TIMED OUT (>5 min) - killed, continuing." -ForegroundColor DarkYellow
+            } elseif ($odRc -ne 0) {
+                Write-Host "      Returned exit code $odRc - usually fine, OneDrive uninstaller is quirky" -ForegroundColor DarkGray
             }
         } catch {
             Write-Host "      Uninstall failed: $($_.Exception.Message)" -ForegroundColor DarkYellow
@@ -2219,6 +2607,7 @@ if ($doNukeOneDrive) {
     $cleanupPaths = @(
         "$env:LOCALAPPDATA\Microsoft\OneDrive",
         "$env:PROGRAMDATA\Microsoft OneDrive",
+        "$env:ProgramFiles\Microsoft OneDrive",   # v3.7: per-machine install dir
         "C:\OneDriveTemp"
     )
     foreach ($p in $profiles) {
@@ -2293,7 +2682,12 @@ if ($doNukeOneDrive) {
             } catch { }
         }
 
-    Write-Host "  OneDrive nuke complete." -ForegroundColor Green
+    # v3.7: honest result - green only if the per-machine binary is really gone.
+    if (-not (Test-Path "$env:ProgramFiles\Microsoft OneDrive\OneDrive.exe")) {
+        Write-Host "  OneDrive nuke complete." -ForegroundColor Green
+    } else {
+        Write-Host "  OneDrive nuke PARTIAL - $env:ProgramFiles\Microsoft OneDrive\OneDrive.exe still present (locked or uninstaller refused). Re-run after reboot." -ForegroundColor Yellow
+    }
     Write-Host "  Users may need to sign out and back in to fully purge OneDrive Explorer integration." -ForegroundColor DarkYellow
 
     # --- Sub-phase: strip Teams personal version ---
@@ -2314,6 +2708,9 @@ if ($doNukeOneDrive) {
         # Also uninstall the MicrosoftTeams MSIX provisioned package (personal)
         # NOT the work/school Teams (MSTeams). The personal package name is
         # 'MicrosoftTeams' - the work version is 'MSTeams'.
+        # v3.7: this rule is now also enforced in Phase 2c-3 (which used to
+        # strip MSTeams unconditionally on every run - dental offices on M365
+        # lost their work Teams).
         try {
             $provisioned = Get-AppxProvisionedPackage -Online -ErrorAction Stop |
                            Where-Object { $_.DisplayName -eq 'MicrosoftTeams' }
@@ -2387,6 +2784,90 @@ if ($doNukeOneDrive) {
             Set-ItemProperty -Path $cloudPolicy -Name 'DisableCloudOptimizedContent'       -Value 1 -Type DWord -Force -ErrorAction SilentlyContinue
             Write-Host "    Consumer features policy applied." -ForegroundColor DarkGray
         } catch { }
+
+        # ------------------------------------------------------------------
+        # v3.7: Windows 11 26H2 policies. 26H2 turns several consumer-cloud
+        # features ON by default for commercial devices (settings sync /
+        # "Windows Backup", Recall, Click to Do, Copilot, New Outlook pinned
+        # and auto-installed). Each write is independent and best-effort; one
+        # DarkGray line per item so the transcript shows what landed.
+        # ------------------------------------------------------------------
+        Write-Host "  Applying Windows 11 26H2 policies (sync/Recall/Copilot/Outlook/Start)..." -ForegroundColor DarkGray
+
+        # Small local helper: ensure key + set DWORD/String, report one line.
+        $setPol = {
+            param($Path, $Name, $Value, $Type, $Label)
+            try {
+                if (-not (Test-Path $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
+                Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -Force -ErrorAction Stop
+                Write-Host "    ok   : $Label" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "    FAIL : $Label - $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+
+        # (a) Settings sync + Windows Backup OFF explicitly. 26H2 flips sync on
+        #     by default for commercial devices; this is the documented
+        #     SettingSync policy pair. WindowsBackup\DisableBackup is the
+        #     best-effort policy name used by the Settings > Accounts > Windows
+        #     backup page (not in the ADMX templates yet - harmless if ignored).
+        $ssPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync'
+        & $setPol $ssPol 'DisableSettingSync'             2 'DWord' 'SettingSync: DisableSettingSync=2'
+        & $setPol $ssPol 'DisableSettingSyncUserOverride' 1 'DWord' 'SettingSync: DisableSettingSyncUserOverride=1'
+        & $setPol 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsBackup' 'DisableBackup' 1 'DWord' 'WindowsBackup: DisableBackup=1 (best-effort policy name)'
+
+        # (b) Recall / Click to Do / AI settings agent OFF.
+        $aiPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+        & $setPol $aiPol 'AllowRecallEnablement' 0 'DWord' 'WindowsAI: AllowRecallEnablement=0'
+        & $setPol $aiPol 'DisableAIDataAnalysis' 1 'DWord' 'WindowsAI: DisableAIDataAnalysis=1 (Recall snapshots)'
+        & $setPol $aiPol 'DisableClickToDo'      1 'DWord' 'WindowsAI: DisableClickToDo=1'
+        & $setPol $aiPol 'DisableSettingsAgent'  1 'DWord' 'WindowsAI: DisableSettingsAgent=1'
+
+        # (c) Copilot. TurnOffWindowsCopilot is deprecated since 24H2 (the
+        #     Copilot app ignores it) but harmless, so keep it for older
+        #     builds; the real fix on 24H2+ is removing the Store package.
+        & $setPol 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1 'DWord' 'WindowsCopilot: TurnOffWindowsCopilot=1 (deprecated, harmless)'
+        try {
+            Get-AppxPackage -AllUsers -Name 'Microsoft.Copilot' -ErrorAction SilentlyContinue |
+                Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+            Write-Host "    ok   : Copilot app removed for all users (if present)" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "    FAIL : Copilot app removal - $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+        try {
+            Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -like 'Microsoft.Copilot*' } |
+                Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "    ok   : Copilot provisioned package removed (if present)" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "    FAIL : Copilot provisioned removal - $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+
+        # (d) New Outlook: remove provisioned + installed copies, and block the
+        #     OOBE updater that re-installs it (BlockedOobeUpdaters REG_SZ).
+        try {
+            Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -eq 'Microsoft.OutlookForWindows' } |
+                Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "    ok   : New Outlook provisioned package removed (if present)" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "    FAIL : New Outlook provisioned removal - $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+        try {
+            Get-AppxPackage -AllUsers -Name 'Microsoft.OutlookForWindows' -ErrorAction SilentlyContinue |
+                Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+            Write-Host "    ok   : New Outlook app removed for all users (if present)" -ForegroundColor DarkGray
+        } catch {
+            Write-Host "    FAIL : New Outlook app removal - $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+        & $setPol 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe' 'BlockedOobeUpdaters' '["MS_Outlook"]' 'String' 'UScheduler_Oobe: BlockedOobeUpdaters=["MS_Outlook"]'
+
+        # (e) Start menu: hide "Recommended" personalized sites + recently
+        #     added apps (machine policy, alongside HideRecommendedSection).
+        $explPolM = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer'
+        & $setPol $explPolM 'HideRecommendedSection'          1 'DWord' 'Explorer: HideRecommendedSection=1'
+        & $setPol $explPolM 'HideRecommendedPersonalizedSites' 1 'DWord' 'Explorer: HideRecommendedPersonalizedSites=1'
+        & $setPol $explPolM 'HideRecentlyAddedApps'            1 'DWord' 'Explorer: HideRecentlyAddedApps=1'
     }
 } else {
     Write-Host "`n[Phase 1k] OneDrive nuke: SKIPPED." -ForegroundColor DarkGray
@@ -2482,9 +2963,20 @@ function Remove-PathSafe {
     param([string]$Path)
     if (Test-Path -LiteralPath $Path) {
         try {
+            # v3.7: count before/after so "cleaned" is honest. Remove-Item with
+            # -ErrorAction SilentlyContinue never throws on locked files, so the
+            # old code printed "cleaned" for a Temp folder it barely touched.
+            $before = @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue).Count
             Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue |
                 Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
-            Write-Host "  cleaned : $Path" -ForegroundColor DarkGray
+            $after   = @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction SilentlyContinue).Count
+            $removed = $before - $after
+            if ($removed -lt 0) { $removed = 0 }
+            if ($after -gt 0) {
+                Write-Host "  cleaned : $Path ($removed/$before items) (some items locked)" -ForegroundColor DarkYellow
+            } else {
+                Write-Host "  cleaned : $Path ($removed/$before items)" -ForegroundColor DarkGray
+            }
         } catch {
             Write-Host "  skipped : $Path  ($($_.Exception.Message))" -ForegroundColor DarkYellow
         }
@@ -2499,21 +2991,11 @@ function Remove-PathSafe {
 # clean the SAME relative paths under each LocalPath. Profiles whose user is
 # currently logged in are skipped (their cache files are locked).
 function Get-CleanableProfiles {
-    # Which users have an active session right now? Skip those.
-    $activeUsers = @()
-    try {
-        $quserOut = & quser 2>$null
-        if ($quserOut) {
-            $activeUsers = $quserOut |
-                Select-Object -Skip 1 |
-                ForEach-Object {
-                    # quser line: ">USERNAME    sessionname  ID  STATE  ..."
-                    $line = $_.Trim() -replace '\s{2,}', '|'
-                    (($line -split '\|')[0] -replace '^>','').Trim()
-                } | Where-Object { $_ }
-        }
-    } catch { }
-
+    # v3.7: "logged in" now comes from Win32_UserProfile.Loaded (the hive is
+    # mounted = files are in use) instead of parsing quser. quser is missing
+    # on Home SKUs, its columns shift with locale/long names, and it lists
+    # disconnected RDP sessions whose hives may already be unloaded - so
+    # profiles were being skipped (or not) for the wrong reasons.
     Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
         Where-Object {
             -not $_.Special -and
@@ -2528,7 +3010,7 @@ function Get-CleanableProfiles {
                 LocalPath  = $_.LocalPath
                 UserName   = $userName
                 SID        = $_.SID
-                IsLoggedIn = ($activeUsers -contains $userName)
+                IsLoggedIn = [bool]$_.Loaded
             }
         }
 }
@@ -2609,8 +3091,22 @@ Remove-PathSafeAllProfiles 'AppData\Local\Microsoft\Windows\INetCache'
 
 Write-Host "`n[Phase 2 - 5/8] Removing Windows.old (previous Windows install)..." -ForegroundColor Green
 if (Test-Path "C:\Windows.old") {
-    cmd /c "takeown /F C:\Windows.old /R /A /D Y >nul 2>&1"
-    cmd /c "icacls C:\Windows.old /grant administrators:F /T /C /Q >nul 2>&1"
+    # v3.7: takeown/icacls walk every file in Windows.old (100k+ entries) and
+    # have hung for hours on a dying disk. 10-min cap each via the module
+    # helper; plain cmd fallback when the module is missing.
+    if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+        $toRc = Start-ProcessWithTimeout -FilePath 'takeown.exe' `
+                    -ArgumentList @('/F','C:\Windows.old','/R','/A','/D','Y') `
+                    -TimeoutMinutes 10 -Label 'takeown Windows.old'
+        if ($toRc -eq -1) { Write-Host "  takeown TIMED OUT (>10 min) - continuing with delete anyway." -ForegroundColor DarkYellow }
+        $icRc = Start-ProcessWithTimeout -FilePath 'icacls.exe' `
+                    -ArgumentList @('C:\Windows.old','/grant','administrators:F','/T','/C','/Q') `
+                    -TimeoutMinutes 10 -Label 'icacls Windows.old'
+        if ($icRc -eq -1) { Write-Host "  icacls TIMED OUT (>10 min) - continuing with delete anyway." -ForegroundColor DarkYellow }
+    } else {
+        cmd /c "takeown /F C:\Windows.old /R /A /D Y >nul 2>&1"
+        cmd /c "icacls C:\Windows.old /grant administrators:F /T /C /Q >nul 2>&1"
+    }
     Remove-Item "C:\Windows.old" -Force -Recurse -ErrorAction SilentlyContinue
     if (Test-Path "C:\Windows.old") {
         Write-Host "  Windows.old still present - try: cleanmgr /sageset:99 -> check 'Previous Windows installations'" -ForegroundColor DarkYellow
@@ -2626,9 +3122,17 @@ if ($IsServer) {
     Write-Host "  SKIPPED on Windows Server - audit trail must be preserved." -ForegroundColor Yellow
     Write-Host "  (HIPAA, SOC, security forensics, etc. all depend on logs.)" -ForegroundColor DarkGray
 } else {
-    wevtutil el | ForEach-Object {
-        wevtutil cl "$_" 2>$null
-    }
+    # v3.7: only clear logs that are enabled AND actually hold records.
+    # 'wevtutil el' lists ~1,500 channels, most empty/disabled - clearing all
+    # of them spawned 1,500 processes and took minutes; this is ~10x fewer.
+    $logsCleared = 0
+    Get-WinEvent -ListLog * -ErrorAction SilentlyContinue |
+        Where-Object { $_.RecordCount -gt 0 -and $_.IsEnabled } |
+        ForEach-Object {
+            wevtutil cl "$($_.LogName)" 2>$null
+            $logsCleared++
+        }
+    Write-Host "  Cleared $logsCleared non-empty event log(s)." -ForegroundColor DarkGray
 }
 
 Write-Host "`n[Phase 2 - 7/8] Deleting restore points / shadow copies..." -ForegroundColor Green
@@ -2819,18 +3323,32 @@ $nativeCleanupCount = 0
 $nativeCleanupBytes = 0
 
 foreach ($target in $nativeCleanupTargets) {
-    if (Test-Path -LiteralPath $target -ErrorAction SilentlyContinue) {
+    # v3.7: -Path (wildcard-aware), NOT -LiteralPath. Most targets end in '\*'
+    # or 'thumbcache_*.db'; -LiteralPath looked for a file literally named '*'
+    # and silently skipped every wildcard entry - the native cleanup only ever
+    # touched the four fixed $Windows.~XX folders.
+    if (Test-Path -Path $target -ErrorAction SilentlyContinue) {
         try {
             # Sum sizes before delete for the user-facing summary
-            $items = Get-ChildItem -Path $target -Force -Recurse -ErrorAction SilentlyContinue
+            $items = @(Get-ChildItem -Path $target -Force -Recurse -ErrorAction SilentlyContinue)
+            $before = $items.Count
+            if ($before -eq 0 -and (Test-Path -Path $target -PathType Leaf)) { $before = 1 }  # single file target (Memory.dmp)
             if ($items) {
                 $bytes = ($items | Where-Object { -not $_.PSIsContainer } |
                           Measure-Object Length -Sum -ErrorAction SilentlyContinue).Sum
                 if ($bytes) { $nativeCleanupBytes += $bytes }
             }
             Remove-Item -Path $target -Force -Recurse -ErrorAction SilentlyContinue
+            $after = @(Get-ChildItem -Path $target -Force -Recurse -ErrorAction SilentlyContinue).Count
+            if ($after -eq 0 -and (Test-Path -Path $target -PathType Leaf)) { $after = 1 }
+            $removed = $before - $after
+            if ($removed -lt 0) { $removed = 0 }
             $nativeCleanupCount++
-            Write-Host "  cleaned : $target" -ForegroundColor DarkGray
+            if ($after -gt 0) {
+                Write-Host "  cleaned : $target ($removed/$before items) (some items locked)" -ForegroundColor DarkYellow
+            } else {
+                Write-Host "  cleaned : $target ($removed/$before items)" -ForegroundColor DarkGray
+            }
         } catch {
             Write-Host "  skipped : $target  ($($_.Exception.Message))" -ForegroundColor DarkYellow
         }
@@ -2894,6 +3412,32 @@ try {
 # take down services or make the box unfindable. The static config still gets
 # RECORDED (below) for the tech's records.
 Write-Host "  [2c-2] Network adapter configuration..." -ForegroundColor DarkGray
+
+# v3.7: remote-session guard. Switching a static adapter to DHCP while the
+# tech is connected over RDP / TeamViewer / AnyDesk / ScreenConnect drops
+# the very session running this script (new lease = new IP, or no lease at
+# all on a static-only LAN) - and the tech cannot get back in to finish.
+$isRemoteSession = $false
+$remoteReason    = ''
+try {
+    if ($env:SESSIONNAME -like 'RDP*') { $isRemoteSession = $true; $remoteReason = "RDP session $env:SESSIONNAME" }
+    $remoteProcs = @(Get-Process -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Name -match '^(TeamViewer|TeamViewer_Service|AnyDesk|ScreenConnect\.Client.*)$' })
+    if ($remoteProcs.Count -gt 0) {
+        # Conservative by design: we cannot tell "Host idling" from "tech
+        # connected" without the vendor API, and a wrong guess here strands
+        # the tech. NOTE: TeamViewer Host (Phase 1e) keeps TeamViewer.exe +
+        # TeamViewer_Service running, so a box with the Host installed is
+        # always treated as remote - the tech converts to DHCP by hand.
+        $isRemoteSession = $true
+        if ($remoteReason) { $remoteReason += '; ' }
+        $remoteReason += 'remote-control process: ' + (($remoteProcs | Select-Object -ExpandProperty Name -Unique) -join ', ')
+    }
+} catch { }
+if ($isRemoteSession) {
+    Write-Host "    Remote session detected ($remoteReason) - static adapters will be KEPT." -ForegroundColor DarkYellow
+}
+
 try {
     $adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }
     if (-not $adapters) { Write-Host "    (no active physical adapters found.)" -ForegroundColor DarkGray }
@@ -2907,6 +3451,8 @@ try {
             $dns = (Get-DnsClientServerAddress -InterfaceIndex $ad.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses -join ', '
             if ($IsServer) {
                 Write-Host "    STATIC IP on '$($ad.Name)' (Server - KEEPING static, not switching to DHCP):" -ForegroundColor Cyan
+            } elseif ($isRemoteSession) {
+                Write-Host "    STATIC IP on '$($ad.Name)' (remote session - KEEPING static):" -ForegroundColor Cyan
             } else {
                 Write-Host "    *** STATIC IP on '$($ad.Name)' - RECORDING before switch to DHCP ***" -ForegroundColor Yellow
             }
@@ -2914,8 +3460,33 @@ try {
             Write-Host ("      Gateway : {0}" -f $gw)  -ForegroundColor Yellow
             Write-Host ("      DNS     : {0}" -f $dns) -ForegroundColor Yellow
 
+            # v3.7: also persist the static config to a file in the staging
+            # dir - the transcript gets deleted with C:\iDezign_Cleanup_Utility
+            # before imaging, so this gives the tech a file they can copy off.
+            try {
+                $safeName = ($ad.Name -replace '[^A-Za-z0-9_\-]', '_')
+                $backupFile = Join-Path $StagingDir "static_ip_backup_$safeName.txt"
+                $backupLines = @(
+                    "Static IP backup - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+                    "Computer : $env:COMPUTERNAME",
+                    "Adapter  : $($ad.Name)  ($($ad.InterfaceDescription))",
+                    "MAC      : $($ad.MacAddress)"
+                )
+                foreach ($ip in $ips) { $backupLines += ("IP/Mask  : {0}/{1}" -f $ip.IPAddress, $ip.PrefixLength) }
+                $backupLines += "Gateway  : $gw"
+                $backupLines += "DNS      : $dns"
+                $backupLines += ""
+                $backupLines += "Restore  : New-NetIPAddress -InterfaceAlias '$($ad.Name)' -IPAddress <ip> -PrefixLength <len> -DefaultGateway $gw ; Set-DnsClientServerAddress -InterfaceAlias '$($ad.Name)' -ServerAddresses $($dns -replace ', ',',')"
+                $backupLines | Set-Content -Path $backupFile -Encoding ASCII -ErrorAction Stop
+                Write-Host "      saved   : $backupFile" -ForegroundColor DarkGray
+            } catch {
+                Write-Host "      (could not write static IP backup file: $($_.Exception.Message))" -ForegroundColor DarkYellow
+            }
+
             if ($IsServer) {
                 Write-Host "      -> '$($ad.Name)' left as-is (Server keeps static IP)." -ForegroundColor DarkGray
+            } elseif ($isRemoteSession) {
+                Write-Host "      -> static IP kept - remote session detected (RDP/TeamViewer); converting would drop this session." -ForegroundColor Yellow
             } else {
                 Set-NetIPInterface       -InterfaceIndex $ad.ifIndex -Dhcp Enabled -ErrorAction SilentlyContinue
                 Set-DnsClientServerAddress -InterfaceIndex $ad.ifIndex -ResetServerAddresses -ErrorAction SilentlyContinue
@@ -2929,35 +3500,54 @@ try {
     Write-Host "    (network step issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
 }
 
-# --- 2c-3: Remove Microsoft Teams (consumer + new work/school + machine-wide) -
-Write-Host "  [2c-3] Removing Microsoft Teams app(s)..." -ForegroundColor DarkGray
-try {
-    # Hide the Win11 chat icon (per-machine policy)
-    $chatPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Chat'
-    New-Item -Path $chatPol -Force -ErrorAction SilentlyContinue | Out-Null
-    Set-ItemProperty -Path $chatPol -Name 'ChatIcon' -Type DWord -Value 3 -Force -ErrorAction SilentlyContinue
+# --- 2c-3: Remove consumer Microsoft Teams (personal) + machine-wide installer -
+# v3.7: this block used to run on EVERY cleanup and removed MSTeams (the
+# work/school client) too - M365 dental offices lost Teams after a cleanup.
+# Now: gated on the "remove Teams personal" prompt answer, and it only ever
+# touches the consumer 'MicrosoftTeams' package and the legacy "Teams
+# Machine-Wide Installer" MSI. MSTeams is never removed.
+if ($doStripTeamsPersonal) {
+    Write-Host "  [2c-3] Removing consumer Teams (MicrosoftTeams) + machine-wide installer (MSTeams work/school is KEPT)..." -ForegroundColor DarkGray
+    try {
+        # Hide the Win11 chat icon (per-machine policy)
+        $chatPol = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Chat'
+        New-Item -Path $chatPol -Force -ErrorAction SilentlyContinue | Out-Null
+        Set-ItemProperty -Path $chatPol -Name 'ChatIcon' -Type DWord -Value 3 -Force -ErrorAction SilentlyContinue
 
-    foreach ($pkg in 'MicrosoftTeams','MSTeams') {
-        Get-AppxPackage -AllUsers -Name $pkg -ErrorAction SilentlyContinue |
-            ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue }
-        Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -eq $pkg } |
-            ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue } | Out-Null
-    }
-
-    # Classic "Teams Machine-Wide Installer" (MSI)
-    $twKeys = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
-                               'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
-              Where-Object { $_.DisplayName -like 'Teams Machine-Wide Installer*' }
-    foreach ($t in $twKeys) {
-        if ($t.UninstallString -match '\{[0-9A-Fa-f\-]+\}') {
-            $guid = $Matches[0]
-            Start-Process msiexec.exe -ArgumentList "/x $guid /qn /norestart" -Wait -ErrorAction SilentlyContinue
+        # Consumer package ONLY. 'MSTeams' (work/school) is intentionally absent.
+        foreach ($pkg in @('MicrosoftTeams')) {
+            Get-AppxPackage -AllUsers -Name $pkg -ErrorAction SilentlyContinue |
+                ForEach-Object { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue }
+            Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+                Where-Object { $_.DisplayName -eq $pkg } |
+                ForEach-Object { Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue } | Out-Null
         }
+
+        # Classic "Teams Machine-Wide Installer" (MSI) - the per-user
+        # auto-install stub for classic Teams; it only re-seeds the old client.
+        $twKeys = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                                   'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DisplayName -like 'Teams Machine-Wide Installer*' }
+        foreach ($t in $twKeys) {
+            if ($t.UninstallString -match '\{[0-9A-Fa-f\-]+\}') {
+                $guid = $Matches[0]
+                # v3.7: 10-min cap - msiexec can sit on a hidden "close Teams" prompt.
+                if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                    $twRc = Start-ProcessWithTimeout -FilePath 'msiexec.exe' `
+                                -ArgumentList @('/x', $guid, '/qn', '/norestart') `
+                                -TimeoutMinutes 10 -Label 'Teams Machine-Wide Installer uninstall'
+                    if ($twRc -eq -1) { Write-Host "    msiexec /x $guid TIMED OUT (>10 min) - skipped." -ForegroundColor DarkYellow }
+                } else {
+                    Start-Process msiexec.exe -ArgumentList "/x $guid /qn /norestart" -Wait -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        Write-Host "    Consumer Teams + machine-wide installer removal attempted (MSTeams work/school untouched)." -ForegroundColor DarkGray
+    } catch {
+        Write-Host "    (Teams removal issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
     }
-    Write-Host "    Teams (consumer + work/school + machine-wide) removal attempted." -ForegroundColor DarkGray
-} catch {
-    Write-Host "    (Teams removal issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+} else {
+    Write-Host "  [2c-3] Teams removal: SKIPPED (not selected at prompt; MSTeams work/school is never removed)." -ForegroundColor DarkGray
 }
 
 # --- 2c-4: Chrome bookmark bar ON + iDezign.ai bookmark (current user) --------

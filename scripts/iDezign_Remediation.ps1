@@ -9,7 +9,8 @@
 #  Run as Administrator.
 # ============================================================================
 #  Tiers of action:
-#    Tier 1 (LOW risk)    : start services, flush DNS, update sigs, scan
+#    Tier 1 (LOW risk)    : start services, flush DNS, update sigs, scan,
+#                           hibernation off, network profile -> Private (v3.7)
 #    Tier 2 (MEDIUM risk) : reset WU components, winsock reset, sfc/dism
 #    Tier 3 (RECOMMEND)   : hardware replacement / upgrade advice only
 #
@@ -30,7 +31,7 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.06.30-v3.0-pdf-merge'
+$ScriptVersion = '2026.10.25-v3.7-real-fixes'
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -176,18 +177,29 @@ Write-Action "Source for issue list: $snapSource"
 
 #region --- Helpers ----------------------------------------------------------
 
-function Ask-YN {
-    # Returns 'Y', 'N', or 'Q'
-    param([string]$Prompt = "Apply this fix? (Y/N/Q=quit)")
-    do {
-        $ans = Read-Host "  $Prompt"
-        switch -regex ($ans) {
-            '^(y|yes)$'  { return 'Y' }
-            '^(n|no)$'   { return 'N' }
-            '^(q|quit)$' { return 'Q' }
-            default      { Write-Host "    Please answer Y, N, or Q." -ForegroundColor DarkYellow }
-        }
-    } while ($true)
+# v3.7: Ask-YN is the local name every handler calls. When the module is
+# loaded, its Read-iDezignYN is the single source of truth for the prompt,
+# so Ask-YN just forwards to it; the inline loop is only the no-module fallback.
+if (Get-Command Read-iDezignYN -ErrorAction SilentlyContinue) {
+    function Ask-YN {
+        # Returns 'Y', 'N', or 'Q'
+        param([string]$Prompt = "Apply this fix? (Y/N/Q=quit)")
+        return (Read-iDezignYN -Prompt $Prompt)
+    }
+} else {
+    function Ask-YN {
+        # Returns 'Y', 'N', or 'Q'
+        param([string]$Prompt = "Apply this fix? (Y/N/Q=quit)")
+        do {
+            $ans = Read-Host "  $Prompt"
+            switch -regex ($ans) {
+                '^(y|yes)$'  { return 'Y' }
+                '^(n|no)$'   { return 'N' }
+                '^(q|quit)$' { return 'Q' }
+                default      { Write-Host "    Please answer Y, N, or Q." -ForegroundColor DarkYellow }
+            }
+        } while ($true)
+    }
 }
 
 function Show-IssueHeader {
@@ -199,14 +211,19 @@ function Show-IssueHeader {
     Write-Host "  Tier: $Tier   Risk: $Risk" -ForegroundColor DarkGray
 }
 
-function Test-PendingReboot {
-    $signals = @()
-    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')   { $signals += 'CBS RebootPending' }
-    if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')  { $signals += 'WindowsUpdate RebootRequired' }
-    $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
-    if ($sm -and $sm.PendingFileRenameOperations) { $signals += 'PendingFileRenameOperations' }
-    if (Test-Path 'C:\Windows\WinSxS\pending.xml') { $signals += 'pending.xml exists' }
-    return $signals
+# v3.7: local fallback only - the module's Test-PendingReboot (richer: also
+# checks pending computer rename and optional-feature transitions) wins when
+# iDezign_Common.psm1 is loaded. Defining this unconditionally shadowed it.
+if (-not (Get-Command Test-PendingReboot -ErrorAction SilentlyContinue)) {
+    function Test-PendingReboot {
+        $signals = @()
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending')   { $signals += 'CBS RebootPending' }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')  { $signals += 'WindowsUpdate RebootRequired' }
+        $sm = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+        if ($sm -and $sm.PendingFileRenameOperations) { $signals += 'PendingFileRenameOperations' }
+        if (Test-Path 'C:\Windows\WinSxS\pending.xml') { $signals += 'pending.xml exists' }
+        return ,$signals
+    }
 }
 
 function Write-Check {
@@ -227,18 +244,32 @@ function Build-IssueList {
 
     # --- Essential services (live check - cheap and authoritative) ---
     Write-Check 'essential Windows services'
-    # NOTE: BITS intentionally omitted - per Eric's preference, false positives
-    # on healthy boxes outweigh the value. (Mirrors the diagnostics tool.)
-    # Only AUTOMATIC services that are stopped are genuine problems. Manual /
-    # trigger-start services (e.g. msiserver, and wuauserv on Win10/11) are
-    # SUPPOSED to sit stopped until something needs them - flagging those was
-    # noise, so they're excluded and the filter requires StartType = Automatic.
-    $essentials = @('WinDefend','RpcSs','Dhcp','Dnscache','LanmanServer','LanmanWorkstation','Schedule','CryptSvc')
-    foreach ($e in $essentials) {
-        $s = Get-Service -Name $e -ErrorAction SilentlyContinue
-        if ($s -and $s.Status -ne 'Running' -and $s.StartType -eq 'Automatic') {
+    # v3.7: the list now comes from Get-iDezignEssentialServices in the shared
+    # module so Diagnostics and Remediation agree on what "essential" means
+    # (they had drifted). Same CRITICAL rule as Diagnostics: a service is a
+    # problem ONLY if it is not Running AND its actual StartMode is Auto AND
+    # it is not trigger-started (no TriggerInfo registry key). Manual and
+    # trigger-start services are SUPPOSED to sit stopped until something
+    # needs them - starting those by hand is noise, not a fix.
+    if (Get-Command Get-iDezignEssentialServices -ErrorAction SilentlyContinue) {
+        $essentialDefs = Get-iDezignEssentialServices
+    } else {
+        $essentialDefs = @(
+            @{Name='Dhcp';Auto=$true}, @{Name='Dnscache';Auto=$true}, @{Name='LanmanWorkstation';Auto=$true},
+            @{Name='LanmanServer';Auto=$true}, @{Name='EventLog';Auto=$true}, @{Name='Schedule';Auto=$true},
+            @{Name='CryptSvc';Auto=$true}, @{Name='BITS';Auto=$false}, @{Name='wuauserv';Auto=$false},
+            @{Name='WinDefend';Auto=$false}, @{Name='mpssvc';Auto=$true}, @{Name='W32Time';Auto=$false},
+            @{Name='Spooler';Auto=$true}
+        )
+    }
+    foreach ($def in $essentialDefs) {
+        $e = $def.Name
+        $s = Get-CimInstance Win32_Service -Filter "Name='$e'" -ErrorAction SilentlyContinue
+        if (-not $s) { continue }
+        $isTrigger = Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\$e\TriggerInfo"
+        if ($s.State -ne 'Running' -and $s.StartMode -eq 'Auto' -and -not $isTrigger) {
             $issues.Add(@{
-                Title = "Essential service '$e' is $($s.Status)"
+                Title = "Essential service '$e' is $($s.State) (StartMode=Auto)"
                 Tier  = 1; Risk = 'LOW'
                 Type  = 'StartService'
                 Data  = @{ Name = $e }
@@ -316,7 +347,7 @@ function Build-IssueList {
 
     # --- Pending reboot (always live) ---
     Write-Check 'pending reboot'
-    $pending = Test-PendingReboot
+    $pending = @(Test-PendingReboot)
     if ($pending.Count -gt 0) {
         $issues.Add(@{
             Title = "Reboot is pending: $($pending -join '; ')"
@@ -622,6 +653,61 @@ function Build-IssueList {
         })
     }
 
+    # --- v3.7: iDezign baseline items Diagnostics flags in section 12 ---
+    # The snapshot only stores pass/fail COUNTS for the verification section
+    # (and network profiles without an interface index), so these re-detect
+    # live. Cheap checks, all read-only here; the handlers do the writing.
+
+    # Hibernation on -> powercfg /h off (reclaims hiberfil.sys, baseline = off)
+    Write-Check 'hibernation (baseline: off)'
+    if (Test-Path 'C:\hiberfil.sys') {
+        $hsize = 0
+        try { $hsize = [math]::Round((Get-Item 'C:\hiberfil.sys' -Force -ErrorAction Stop).Length / 1GB, 1) } catch { }
+        $issues.Add(@{
+            Title = "Hibernation is enabled (hiberfil.sys = $hsize GB) - baseline is OFF"
+            Tier  = 1; Risk = 'LOW'
+            Type  = 'DisableHibernation'
+            Data  = @{ SizeGB = $hsize }
+        })
+    }
+
+    # Network profile Public on a non-domain connection -> set Private
+    Write-Check 'network profile category (baseline: Private)'
+    try {
+        $pubProfiles = @(Get-NetConnectionProfile -ErrorAction Stop | Where-Object { $_.NetworkCategory -eq 'Public' })
+        foreach ($pp in $pubProfiles) {
+            $issues.Add(@{
+                Title = "Network '$($pp.Name)' on '$($pp.InterfaceAlias)' is Public - file sharing blocked"
+                Tier  = 1; Risk = 'LOW'
+                Type  = 'SetNetworkPrivate'
+                Data  = @{ Name = $pp.Name; InterfaceAlias = $pp.InterfaceAlias; InterfaceIndex = [int]$pp.InterfaceIndex }
+            })
+        }
+    } catch { }
+
+    # REPAIR admin account missing -> instruction only (Cleanup owns creation
+    # because the password policy lives there).
+    if (-not $IsDC) {
+        Write-Check 'REPAIR account (baseline: present)'
+        $repairExists = $false
+        try { Import-Module Microsoft.PowerShell.LocalAccounts -ErrorAction SilentlyContinue } catch { }
+        if (Get-Command Get-LocalUser -ErrorAction SilentlyContinue) {
+            try { $repairExists = [bool](Get-LocalUser -Name 'REPAIR' -ErrorAction Stop) } catch { }
+        }
+        if (-not $repairExists) {
+            $null = & net user REPAIR 2>&1
+            $repairExists = ($LASTEXITCODE -eq 0)
+        }
+        if (-not $repairExists) {
+            $issues.Add(@{
+                Title = "REPAIR admin account is missing"
+                Tier  = 1; Risk = 'LOW'
+                Type  = 'RepairAccountMissing'
+                Data  = @{}
+            })
+        }
+    }
+
     return $issues
 }
 
@@ -697,19 +783,84 @@ function Do-UpdateSigs {
 }
 
 function Do-EnableDefender {
+    # v3.7: this used to flip ONE preference (real-time monitoring) and then
+    # report "fixed" without ever checking whether AntivirusEnabled actually
+    # went true. On a box where Defender was disabled by policy keys, that
+    # was a lie. Now: refuse honestly when Tamper Protection blocks us,
+    # remove the known disable-policy values, start the service, and only
+    # report success after Get-MpComputerStatus confirms it.
     Write-Host "  Recommended action: Re-enable Windows Defender antivirus" -ForegroundColor White
-    Write-Host "  This sets DisableAntiSpyware = 0 via Set-MpPreference" -ForegroundColor DarkGray
+    Write-Host "  Steps: remove DisableAntiSpyware / DisableAntiVirus / DisableRealtimeMonitoring" -ForegroundColor DarkGray
+    Write-Host "         policy values, Set-MpPreference -DisableRealtimeMonitoring 0, start WinDefend," -ForegroundColor DarkGray
+    Write-Host "         then RE-VERIFY AntivirusEnabled before claiming success." -ForegroundColor DarkGray
     Write-Host "  CAUTION: only do this if no third-party AV is installed." -ForegroundColor DarkYellow
+
+    # Tamper Protection gate - with it on, every one of the steps below is
+    # silently ignored or blocked. Don't pretend.
+    $tamperOn = $false
+    try { $tamperOn = [bool](Get-MpComputerStatus -ErrorAction Stop).IsTamperProtected } catch { }
+    if ($tamperOn) {
+        Write-Host "  Tamper Protection ON - cannot re-enable via script; use Windows Security UI" -ForegroundColor Yellow
+        Write-Host "  (Windows Security > Virus & threat protection > Manage settings)" -ForegroundColor DarkGray
+        Write-Action "SKIPPED Enable Defender: Tamper Protection is ON (script cannot change it)"
+        return $false
+    }
 
     $ans = Ask-YN -Prompt "Apply this fix? (Y/N/Q) - CONFIRM no other AV present"
     if ($ans -eq 'Q') { return 'Q' }
     if ($ans -eq 'N') { Write-Action "SKIPPED Enable Defender"; return $false }
 
     try {
-        Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
-        Write-Host "  Result: Defender real-time monitoring re-enabled." -ForegroundColor Green
-        Write-Action "Re-enabled Defender real-time monitoring"
-        return $true
+        # 1. Policy keys that force Defender off. Remove-ItemProperty with
+        #    SilentlyContinue: absent values are the normal case.
+        $polRoot = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
+        $removed = @()
+        foreach ($pv in @('DisableAntiSpyware','DisableAntiVirus')) {
+            if ((Test-Path $polRoot) -and ($null -ne (Get-ItemProperty -Path $polRoot -Name $pv -ErrorAction SilentlyContinue))) {
+                Remove-ItemProperty -Path $polRoot -Name $pv -ErrorAction SilentlyContinue
+                $removed += $pv
+            }
+        }
+        $polRt = Join-Path $polRoot 'Real-Time Protection'
+        if ((Test-Path $polRt) -and ($null -ne (Get-ItemProperty -Path $polRt -Name DisableRealtimeMonitoring -ErrorAction SilentlyContinue))) {
+            Remove-ItemProperty -Path $polRt -Name DisableRealtimeMonitoring -ErrorAction SilentlyContinue
+            $removed += 'Real-Time Protection\DisableRealtimeMonitoring'
+        }
+        if ($removed.Count -gt 0) {
+            Write-Host "    Removed policy value(s): $($removed -join ', ')" -ForegroundColor DarkGray
+            Write-Action "Removed Defender disable-policy values: $($removed -join ', ')"
+        } else {
+            Write-Host "    No disable-policy values present." -ForegroundColor DarkGray
+        }
+
+        # 2. Preference + service
+        try { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop } catch {
+            Write-Host "    Set-MpPreference: $($_.Exception.Message)" -ForegroundColor DarkYellow
+        }
+        Start-Service -Name WinDefend -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+
+        # 3. RE-VERIFY - this is the only thing that decides "fixed".
+        $avOn = $false
+        $rtOn = $false
+        try {
+            $mpAfter = Get-MpComputerStatus -ErrorAction Stop
+            $avOn = [bool]$mpAfter.AntivirusEnabled
+            $rtOn = [bool]$mpAfter.RealTimeProtectionEnabled
+        } catch { }
+
+        if ($avOn) {
+            Write-Host "  Result: Defender antivirus is ENABLED (verified). Real-time: $rtOn" -ForegroundColor Green
+            Write-Action "Re-enabled Defender antivirus (verified AntivirusEnabled=True, RealTime=$rtOn)"
+            return $true
+        } else {
+            Write-Host "  NOT FIXED: AntivirusEnabled is still False after the changes." -ForegroundColor Red
+            Write-Host "  Likely causes: a third-party AV owns protection (Defender stays passive)," -ForegroundColor Yellow
+            Write-Host "  a reboot is needed for policy removal, or the platform is damaged." -ForegroundColor Yellow
+            Write-Host "  Check Windows Security UI; if a reboot is pending, re-run after it." -ForegroundColor Yellow
+            Write-Action "Enable Defender: changes applied but AntivirusEnabled still False - NOT fixed"
+            return $false
+        }
     } catch {
         Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
         Write-Action "FAILED to enable Defender: $($_.Exception.Message)"
@@ -886,18 +1037,29 @@ function Do-Chkdsk {
             $output = & cmd.exe /c "echo Y| chkdsk $drive /f /r" 2>&1 | Out-String
             Write-Host $output.Trim() -ForegroundColor DarkGray
 
-            # Verify scheduling worked - chkntfs reports what's scheduled
-            $verify = & chkntfs $drive 2>&1 | Out-String
-            if ($verify -match 'dirty' -or $verify -match 'scheduled') {
+            # Verify scheduling worked - chkntfs reports what's scheduled.
+            # v3.7: the old test was `-match 'dirty'`, which ALSO matched the
+            # healthy output "C: is not dirty." - so every attempt reported
+            # success. Precise rules now:
+            #   scheduled  = (output says "is dirty" AND NOT "is not dirty")
+            #                OR "will be checked" OR "has been scheduled"
+            #   anything else = ambiguous -> NOT fixed, say so.
+            $verify = (& chkntfs $drive 2>&1 | Out-String)
+            $vLower = $verify.ToLower()
+            $dirtyScheduled = ($vLower -match 'is dirty') -and ($vLower -notmatch 'is not dirty')
+            $explicitSched  = ($vLower -match 'will be checked') -or ($vLower -match 'has been scheduled')
+            if ($dirtyScheduled -or $explicitSched) {
                 Write-Host "  Confirmed: chkdsk scheduled for $drive at next boot." -ForegroundColor Green
-                Write-Action "Scheduled chkdsk /f /r on $drive for next boot"
+                Write-Host "    chkntfs: $($verify.Trim())" -ForegroundColor DarkGray
+                Write-Action "Scheduled chkdsk /f /r on $drive for next boot (chkntfs confirmed)"
                 $script:RebootNeeded = $true
                 return $true
             } else {
-                Write-Host "  chkntfs verification: $($verify.Trim())" -ForegroundColor DarkYellow
-                Write-Action "Attempted to schedule chkdsk on $drive - verification ambiguous"
-                $script:RebootNeeded = $true
-                return $true
+                Write-Host "  chkntfs did NOT confirm a scheduled check - treating as NOT fixed." -ForegroundColor Yellow
+                Write-Host "    chkntfs output: $($verify.Trim())" -ForegroundColor Yellow
+                Write-Host "    To schedule manually: open an admin prompt and run  chkdsk $drive /f /r  then answer Y." -ForegroundColor Yellow
+                Write-Action "Attempted to schedule chkdsk on $drive - chkntfs verification ambiguous, NOT counted as fixed"
+                return $false
             }
         } catch {
             Write-Host "  FAILED to schedule chkdsk: $($_.Exception.Message)" -ForegroundColor Red
@@ -1051,6 +1213,91 @@ function Do-StartSQL {
         Write-Action "FAILED SQL start $name : $($_.Exception.Message)"
         return $false
     }
+}
+
+# --- v3.7: Tier 1 baseline handlers (items Diagnostics section 12 flags) ---
+
+function Do-DisableHibernation {
+    param([hashtable]$Data)
+    Write-Host "  Recommended action: Disable hibernation (powercfg /h off)" -ForegroundColor White
+    Write-Host "  Reclaims hiberfil.sys ($($Data.SizeGB) GB) and matches the iDezign baseline." -ForegroundColor DarkGray
+    Write-Host "  Also disables Fast Startup (which is what we want on shared workstations)." -ForegroundColor DarkGray
+    Write-Host "  Reversible: yes (powercfg /h on)" -ForegroundColor DarkGray
+
+    $ans = Ask-YN
+    if ($ans -eq 'Q') { return 'Q' }
+    if ($ans -eq 'N') { Write-Action "SKIPPED Disable hibernation"; return $false }
+
+    try {
+        $null = & powercfg.exe /hibernate off 2>&1
+        Start-Sleep -Seconds 1
+        # Verify: hiberfil.sys goes away as soon as hibernation is off.
+        if (-not (Test-Path 'C:\hiberfil.sys')) {
+            Write-Host "  Result: hibernation OFF (hiberfil.sys removed)." -ForegroundColor Green
+            Write-Action "Disabled hibernation (powercfg /h off) - hiberfil.sys gone"
+            return $true
+        } else {
+            Write-Host "  powercfg ran but hiberfil.sys is still present - NOT counted as fixed." -ForegroundColor Yellow
+            Write-Host "  (Group Policy may force hibernation on; check gpresult /h.)" -ForegroundColor Yellow
+            Write-Action "powercfg /h off ran but hiberfil.sys still present - NOT fixed"
+            return $false
+        }
+    } catch {
+        Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Action "FAILED to disable hibernation: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Do-SetNetworkPrivate {
+    param([hashtable]$Data)
+    $idx = [int]$Data.InterfaceIndex
+    Write-Host "  Recommended action: Set network '$($Data.Name)' to PRIVATE" -ForegroundColor White
+    Write-Host "  Interface : $($Data.InterfaceAlias) (index $idx)" -ForegroundColor DarkGray
+    Write-Host "  Command   : Set-NetConnectionProfile -InterfaceIndex $idx -NetworkCategory Private" -ForegroundColor DarkGray
+    Write-Host "  Public blocks file sharing / discovery / Dentrix peer access." -ForegroundColor DarkGray
+    Write-Host "  CAUTION: only do this on a trusted office LAN, never on guest/hotel Wi-Fi." -ForegroundColor DarkYellow
+    Write-Host "  Reversible: yes (same command with -NetworkCategory Public)" -ForegroundColor DarkGray
+
+    $ans = Ask-YN -Prompt "Set this network to Private? (Y/N/Q)"
+    if ($ans -eq 'Q') { return 'Q' }
+    if ($ans -eq 'N') { Write-Action "SKIPPED Set network '$($Data.Name)' to Private"; return $false }
+
+    try {
+        Set-NetConnectionProfile -InterfaceIndex $idx -NetworkCategory Private -ErrorAction Stop
+        Start-Sleep -Seconds 1
+        $after = (Get-NetConnectionProfile -InterfaceIndex $idx -ErrorAction Stop).NetworkCategory
+        if ("$after" -eq 'Private') {
+            Write-Host "  Result: '$($Data.Name)' is now $after." -ForegroundColor Green
+            Write-Action "Set network '$($Data.Name)' (ifIndex $idx) to Private - verified"
+            return $true
+        } else {
+            Write-Host "  Category is still '$after' after the change - NOT counted as fixed." -ForegroundColor Yellow
+            Write-Action "Set-NetConnectionProfile ran but category is '$after' - NOT fixed"
+            return $false
+        }
+    } catch {
+        Write-Host "  FAILED: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Action "FAILED to set network '$($Data.Name)' to Private: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Do-RepairAccountMissing {
+    # Deliberately NOT created here. The REPAIR password policy and group
+    # membership logic live in Cleanup; duplicating it here would drift.
+    Write-Host "  The REPAIR local admin account is missing from this machine." -ForegroundColor Yellow
+    Write-Host "  This script does NOT create it (the password policy lives in Cleanup)." -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  To fix: run iDezign_Cleanup_Utility.ps1 - its account phase creates REPAIR," -ForegroundColor White
+    Write-Host "  sets the standard password, and adds it to the local Administrators group." -ForegroundColor White
+    Write-Action "REPAIR account missing - instructed operator to run Cleanup (not created here)"
+    # Counted as a recommendation (not "skipped") - there was no Y/N to say N to.
+    $script:Recommendations++
+    $script:RecommendationList.Add("REPAIR admin account is missing - run Cleanup to create it") | Out-Null
+    Write-Host ""
+    Read-Host "  Press Enter to continue"
+    return $null   # neither fixed nor skipped; main loop ignores non-bool results
 }
 
 # --- Tier 3 recommendation-only handlers ---
@@ -1213,6 +1460,9 @@ if ($issues.Count -eq 0) {
             'Reboot'               { Do-Reboot               -Data $issue.Data }
             'StartDentrixService'  { Do-StartDentrixService  -Data $issue.Data }
             'StartSQL'             { Do-StartSQL             -Data $issue.Data }
+            'DisableHibernation'   { Do-DisableHibernation   -Data $issue.Data }   # v3.7
+            'SetNetworkPrivate'    { Do-SetNetworkPrivate    -Data $issue.Data }   # v3.7
+            'RepairAccountMissing' { Do-RepairAccountMissing }                     # v3.7
             'ReplaceDrive'         { Do-ReplaceDrive         -Data $issue.Data }
             'PlanReplaceDrive'     { Do-PlanReplaceDrive     -Data $issue.Data }
             'UpgradeRAM'           { Do-UpgradeRAM           -Data $issue.Data }
@@ -1263,7 +1513,9 @@ if ($issues.Count -eq 0) {
     Write-Host "  Nothing was changed. The system appears to be in good shape." -ForegroundColor Green
     Write-Host ""
     Write-Host "  Things checked this run:" -ForegroundColor DarkGray
-    Write-Host "    - Essential services (wuauserv, WinDefend, RPC, etc.)" -ForegroundColor DarkGray
+    Write-Host "    - Essential services (shared list: Dhcp, Dnscache, LanmanServer, Schedule, mpssvc, Spooler, etc.)" -ForegroundColor DarkGray
+    Write-Host "      (only Auto-start, non-trigger services that are stopped count as problems)" -ForegroundColor DarkGray
+    Write-Host "    - Baseline: hibernation off, network profile not Public, REPAIR account present" -ForegroundColor DarkGray
     Write-Host "    - Windows Defender state and signature age" -ForegroundColor DarkGray
     Write-Host "    - DNS resolution and internet reachability" -ForegroundColor DarkGray
     Write-Host "    - Pending reboot signals (CBS, WU, WinSxS)" -ForegroundColor DarkGray
@@ -1465,33 +1717,65 @@ body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
         $uri     = 'file:///' + ($tempHtml -replace '\\','/')
 
         Write-Host "  Output : $pdf" -ForegroundColor DarkGray
-        Write-Host "  Creating PDF (Edge headless)..." -ForegroundColor Cyan
+        Write-Host "  Creating PDF (Edge headless, up to 3 min)..." -ForegroundColor Cyan
 
+        # v3.7: Edge headless hangs forever when a signed-in Edge profile is
+        # locked by a running instance - so we give it its OWN throwaway
+        # user-data-dir and a hard 3-minute timeout. Args are pre-quoted
+        # (they contain spaces + '=' and Start-ProcessWithTimeout leaves
+        # already-quoted args alone).
+        $edgeProfile = Join-Path $env:TEMP 'idz-edge'
+        $edgeArgs = @(
+            '--headless',
+            '--disable-gpu',
+            '--no-first-run',
+            '--print-to-pdf-no-header',
+            ('"--user-data-dir={0}"' -f $edgeProfile),
+            ('"--print-to-pdf={0}"' -f $pdf),
+            ('"{0}"' -f $uri)
+        )
+        $edgeRc = $null
         try {
-            Start-Process -FilePath $edge -Wait -WindowStyle Hidden -ArgumentList @(
-                '--headless',
-                '--disable-gpu',
-                '--no-first-run',
-                ('--print-to-pdf="{0}"' -f $pdf),
-                ('"{0}"' -f $uri)
-            )
+            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+                $edgeRc = Start-ProcessWithTimeout -FilePath $edge -ArgumentList $edgeArgs `
+                            -TimeoutMinutes 3 -Label 'Edge headless PDF' -NoNewWindow $true
+            } else {
+                Start-Process -FilePath $edge -Wait -WindowStyle Hidden -ArgumentList $edgeArgs -ErrorAction Stop
+                $edgeRc = 0
+            }
         } catch {
             Write-Host "  ERROR launching Edge: $($_.Exception.Message)" -ForegroundColor Red
         }
+        try { Remove-Item -LiteralPath $edgeProfile -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 
         # Edge headless can finish writing a moment after exit - wait briefly.
         $tries = 0
         while (-not (Test-Path $pdf) -and $tries -lt 20) { Start-Sleep -Milliseconds 250; $tries++ }
 
-        Write-Host ""
+        # v3.7: a file that exists is not proof of a report - Edge writes a
+        # near-empty PDF when the page fails to load. Require > 10 KB.
+        $pdfOk = $false
+        $kb = 0
         if (Test-Path $pdf) {
             $kb = [math]::Round((Get-Item $pdf).Length / 1KB, 0)
+            $pdfOk = ((Get-Item $pdf).Length -gt 10KB)
+        }
+
+        Write-Host ""
+        if ($pdfOk) {
             Write-Host "  SUCCESS - PDF saved to your Desktop:" -ForegroundColor Green
             Write-Host "    $pdf  ($kb KB)" -ForegroundColor Green
             try { Start-Process explorer.exe ('/select,"{0}"' -f $pdf) } catch { }
         } else {
-            Write-Host "  PDF was not produced. Edge may have failed silently." -ForegroundColor Red
-            Write-Host "  You can open the source HTML and Print -> Save as PDF manually:" -ForegroundColor Yellow
+            if (Test-Path $pdf) {
+                Write-Host "  PDF was produced but is only $kb KB - almost certainly blank/failed render." -ForegroundColor Red
+                try { Remove-Item -LiteralPath $pdf -Force -ErrorAction SilentlyContinue } catch { }
+            } elseif ($edgeRc -eq -1) {
+                Write-Host "  Edge timed out after 3 minutes - PDF not produced." -ForegroundColor Red
+            } else {
+                Write-Host "  PDF was not produced. Edge may have failed silently (rc=$edgeRc)." -ForegroundColor Red
+            }
+            Write-Host "  Fallback: open the HTML below in a browser, then Print -> Save as PDF:" -ForegroundColor Yellow
             Write-Host "    $tempHtml" -ForegroundColor DarkGray
         }
         # Note: temp HTML is left in place as a manual-fallback option.

@@ -14,6 +14,8 @@
 #    Get-IsServerOS         - detects Windows Server SKUs
 #    Get-iDezignBanner      - consistent banner output across scripts
 #    Start-iDezignTranscript- wraps Start-Transcript with sane defaults
+#    Get-iDezignEssentialServices - shared essential-service list (v3.7)
+#    Get-iDezignConsoleUserSid    - logged-on console user name/SID/profile (v3.7)
 #
 #  Loading pattern (in each consuming script):
 #    $modulePath = Join-Path $PSScriptRoot 'iDezign_Common.psm1'
@@ -26,7 +28,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.07.03-v3.4.4-admingroup-cim'
+$script:ModuleVersion = '2026.10.25-v3.7-args-quoting'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -187,8 +189,11 @@ function Get-RemoteFile {
     $previousProgressPref = $global:ProgressPreference
     $global:ProgressPreference = 'SilentlyContinue'
     try {
-        # Force TLS 1.2 minimum - some older defaults still negotiate down
-        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 } catch { }
+        # v3.7: Make sure TLS 1.2 is ENABLED without clobbering whatever else is
+        # already on. The old assignment replaced the whole set with Tls12|Tls11,
+        # which silently disabled TLS 1.3 on OS builds that have it and re-enabled
+        # the deprecated 1.1. OR-ing in Tls12 is additive and leaves 1.3 alone.
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
         # Force HTTP redirects to be followed (default is yes but some Win10/11
         # update changed behavior on PS 5.1 in edge cases).
@@ -532,6 +537,12 @@ function Start-iDezignTranscript {
 .PARAMETER NoNewWindow
     Run without spawning a new window. Default $true.
 
+.PARAMETER StdOutFile
+    v3.7: Optional. When set, the process's standard output is captured and
+    written to this file after the process exits. Default behavior (no
+    redirection, output goes wherever the console sends it) is unchanged
+    when this is not supplied.
+
 .OUTPUTS
     [int] - exit code, or -1 if killed by timeout, or -2 if the process
     could not be started at all.
@@ -543,9 +554,11 @@ function Start-ProcessWithTimeout {
         [string[]] $ArgumentList = @(),
         [int]      $TimeoutMinutes = 10,
         [string]   $Label = 'process',
-        [bool]     $NoNewWindow = $true
+        [bool]     $NoNewWindow = $true,
+        [string]   $StdOutFile = ''
     )
     $started = $null
+    $stdoutTask = $null
     try {
         # If $FilePath is a bare name (no directory component), resolve to
         # full path via Get-Command first. Process.Start with
@@ -570,15 +583,37 @@ function Start-ProcessWithTimeout {
 
         $psi = New-Object System.Diagnostics.ProcessStartInfo
         $psi.FileName  = $resolvedPath
-        if ($ArgumentList) { $psi.Arguments = ($ArgumentList -join ' ') }
+        # v3.7: A plain -join ' ' broke any single argument that contained a
+        # space (e.g. a path under "Program Files") because CreateProcess
+        # re-splits the command line on whitespace. Wrap such args in quotes.
+        # WHY the "no quote char at all" test: some callers pass pre-built
+        # fragments like /i "C:\x y.msi" that already carry their own quoting;
+        # wrapping those again would produce ""..."" and break the call. So we
+        # only quote an arg that has whitespace AND no double-quote in it.
+        if ($ArgumentList) {
+            $quoted = $ArgumentList | ForEach-Object {
+                if (($_ -match '\s') -and ($_ -notmatch '"')) { '"' + $_ + '"' } else { $_ }
+            }
+            $psi.Arguments = ($quoted -join ' ')
+        }
         $psi.UseShellExecute  = $false
         $psi.CreateNoWindow   = $NoNewWindow
         $psi.WindowStyle      = if ($NoNewWindow) { 'Hidden' } else { 'Normal' }
+        # v3.7: optional stdout capture. Only redirect when asked, so existing
+        # callers keep the exact behavior they had.
+        if ($StdOutFile) { $psi.RedirectStandardOutput = $true }
 
         $started = [System.Diagnostics.Process]::Start($psi)
         if (-not $started) {
             Write-Host "  ERROR: failed to start $Label" -ForegroundColor Red
             return -2
+        }
+
+        # v3.7: Begin draining stdout asynchronously BEFORE WaitForExit. If we
+        # waited first and read afterwards, a chatty process would fill the
+        # pipe buffer and block forever (classic redirect deadlock).
+        if ($StdOutFile) {
+            try { $stdoutTask = $started.StandardOutput.ReadToEndAsync() } catch { $stdoutTask = $null }
         }
 
         $timeoutMs = [int]($TimeoutMinutes * 60 * 1000)
@@ -589,6 +624,18 @@ function Start-ProcessWithTimeout {
             try { $started.Kill() } catch { }
             try { $started.WaitForExit(5000) } catch { }
             return -1
+        }
+
+        # v3.7: flush captured stdout to disk. Written even on non-zero exit
+        # so callers can inspect what the tool said before it failed.
+        if ($StdOutFile -and $stdoutTask) {
+            try {
+                $captured = $stdoutTask.Result
+                if ($null -eq $captured) { $captured = '' }
+                $captured | Set-Content -LiteralPath $StdOutFile -Encoding UTF8 -ErrorAction Stop
+            } catch {
+                Write-Host "  (could not write stdout capture to ${StdOutFile}: $($_.Exception.Message))" -ForegroundColor DarkYellow
+            }
         }
 
         return $started.ExitCode
@@ -1303,8 +1350,8 @@ function Sync-SystemTime {
     }
 
     # 2. Decide which NTP source strategy to use.
-    #    Domain-joined → don't touch peers (DC is authoritative).
-    #    Workgroup/standalone → set redundant public NTP peers.
+    #    Domain-joined -> don't touch peers (DC is authoritative).
+    #    Workgroup/standalone -> set redundant public NTP peers.
     $isDomain = $false
     try {
         $isDomain = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain
@@ -1455,9 +1502,13 @@ function Show-VersionCheck {
         [string] $ScriptDir
     )
 
-    # Resolve where to look for the manifest
+    # Resolve where to look for the manifest.
+    # v3.7: inside a module, $PSScriptRoot is already the folder the .psm1
+    # lives in (which is where iDezign_Versions.json sits alongside it).
+    # Taking Split-Path -Parent of that walked one level too high and the
+    # manifest was never found when callers omitted -ScriptDir.
     if (-not $ScriptDir) {
-        if ($PSScriptRoot) { $ScriptDir = Split-Path -Parent $PSScriptRoot }
+        if ($PSScriptRoot) { $ScriptDir = $PSScriptRoot }
         else               { $ScriptDir = (Get-Location).Path }
     }
 
@@ -1506,6 +1557,103 @@ function Show-VersionCheck {
 }
 #endregion
 
+#region --- Get-iDezignEssentialServices (v3.7) -------------------------------
+<#
+.SYNOPSIS
+    Returns the single shared list of essential Windows services that both
+    Diagnostics and Remediation evaluate.
+
+.DESCRIPTION
+    v3.7: Diagnostics and Remediation each carried their own hard-coded list
+    and they had drifted apart (one included wuauserv, the other CryptSvc).
+    One list, one place.
+
+    Each entry is a hashtable: @{ Name = <service name>; Auto = <bool> }.
+    'Auto' is what we EXPECT the start type to be on a healthy box. It is
+    informational for the report - the verdict rule below uses the ACTUAL
+    start mode on the machine, never the expectation.
+
+    Verdict rule for callers (so both tools agree):
+      A service is CRITICAL only when it is NOT Running AND its actual
+      Win32_Service.StartMode is 'Auto' AND it is not trigger-started
+      (no HKLM:\SYSTEM\CurrentControlSet\Services\<name>\TriggerInfo key).
+      Manual or trigger-start services that happen to be stopped are INFO,
+      never a problem - they are SUPPOSED to sit idle until needed.
+
+.OUTPUTS
+    [hashtable[]]
+#>
+function Get-iDezignEssentialServices {
+    [CmdletBinding()]
+    param()
+    $list = @(
+        @{ Name = 'Dhcp';              Auto = $true  }
+        @{ Name = 'Dnscache';          Auto = $true  }
+        @{ Name = 'LanmanWorkstation'; Auto = $true  }
+        @{ Name = 'LanmanServer';      Auto = $true  }
+        @{ Name = 'EventLog';          Auto = $true  }
+        @{ Name = 'Schedule';          Auto = $true  }
+        @{ Name = 'CryptSvc';          Auto = $true  }
+        @{ Name = 'BITS';              Auto = $false }
+        @{ Name = 'wuauserv';          Auto = $false }
+        @{ Name = 'WinDefend';         Auto = $false }
+        @{ Name = 'mpssvc';            Auto = $true  }
+        @{ Name = 'W32Time';           Auto = $false }
+        @{ Name = 'Spooler';           Auto = $true  }
+    )
+    return ,$list
+}
+#endregion
+
+#region --- Get-iDezignConsoleUserSid (v3.7) ----------------------------------
+<#
+.SYNOPSIS
+    Identifies the interactively logged-on console user and returns their
+    name, SID, and profile path.
+
+.DESCRIPTION
+    v3.7: The toolkit runs elevated, and on many machines the elevated
+    session is a DIFFERENT account (local admin / REPAIR) than the person
+    sitting at the keyboard. Any HKCU: or $env:USERPROFILE read in that
+    session inspects the wrong user. This helper resolves the console user
+    via Win32_ComputerSystem.UserName so callers can read
+    Registry::HKEY_USERS\<SID>\... and <ProfilePath>\Downloads instead.
+
+.OUTPUTS
+    [hashtable] @{ Name = 'DOMAIN\user'; Sid = 'S-1-5-21-...'; ProfilePath = 'C:\Users\user' }
+    or $null if no console user is logged on or resolution failed.
+#>
+function Get-iDezignConsoleUserSid {
+    [CmdletBinding()]
+    param()
+    try {
+        $userName = (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName
+        if ([string]::IsNullOrWhiteSpace($userName)) { return $null }
+
+        $nt  = New-Object System.Security.Principal.NTAccount($userName)
+        $sid = $nt.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        if (-not $sid) { return $null }
+
+        $profilePath = $null
+        try {
+            $prof = Get-CimInstance Win32_UserProfile -Filter "SID='$sid'" -ErrorAction Stop | Select-Object -First 1
+            if ($prof -and $prof.LocalPath) { $profilePath = $prof.LocalPath }
+        } catch { }
+        if (-not $profilePath) {
+            # Fallback: ProfileList registry key has the same answer.
+            try {
+                $pl = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid" -ErrorAction Stop
+                if ($pl.ProfileImagePath) { $profilePath = [Environment]::ExpandEnvironmentVariables($pl.ProfileImagePath) }
+            } catch { }
+        }
+
+        return @{ Name = $userName; Sid = $sid; ProfilePath = $profilePath }
+    } catch {
+        return $null
+    }
+}
+#endregion
+
 Export-ModuleMember -Function `
     Test-PendingReboot, `
     Write-iDezignAction, `
@@ -1527,4 +1675,6 @@ Export-ModuleMember -Function `
     Get-iDezignActivationStatus, `
     Sync-SystemTime, `
     Show-VersionCheck, `
-    Get-iDezignCommonVersion
+    Get-iDezignCommonVersion, `
+    Get-iDezignEssentialServices, `
+    Get-iDezignConsoleUserSid

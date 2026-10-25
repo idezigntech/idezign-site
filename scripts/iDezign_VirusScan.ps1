@@ -17,7 +17,7 @@
 #  Run as Administrator. No reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.07.03-virusscan-v1.0'
+$ScriptVersion = '2026.10.25-virusscan-v1.1-desktop-kfm'
 
 #region --- Safety + module load -------------------------------------------
 
@@ -85,7 +85,11 @@ Write-Host "`nRunning Microsoft Defender $($scanType.ToLower()) scan..." -Foregr
 # Scan log on the Desktop (standalone tool - no staging dir like Cleanup had).
 # Created before the scan starts so even errors get logged; timestamped so
 # multiple runs don't overwrite each other.
-$scanLogFile = Join-Path "$env:USERPROFILE\Desktop" ("iDezign_VirusScan_$(Get-Date -Format 'yyyy-MM-dd_HHmm').txt")
+# v3.7: ask the shell where Desktop really is. With OneDrive Known Folder
+# Move it is %USERPROFILE%\OneDrive\Desktop, and the literal path is empty.
+$desktopDir = [Environment]::GetFolderPath('Desktop')
+if ([string]::IsNullOrEmpty($desktopDir)) { $desktopDir = "$env:USERPROFILE\Desktop" }
+$scanLogFile = Join-Path $desktopDir ("iDezign_VirusScan_$(Get-Date -Format 'yyyy-MM-dd_HHmm').txt")
 
 # Helper: write to both console and the log file.
 function Write-ScanLog {
