@@ -39,10 +39,17 @@ jobs:
       - name: Checkout with history
         uses: actions/checkout@v4
         with:
-          # Need parent commit to diff against.
-          fetch-depth: 2
+          # v3.7: full history. A push can carry several commits; diffing
+          # HEAD~1 only inspected the last one, so a silent edit in an
+          # earlier commit of the same push slipped through. We now diff
+          # against the pre-push SHA (github.event.before), which needs
+          # that commit to be present locally.
+          fetch-depth: 0
 
-      - name: Compare $ScriptVersion between parent and current commit
+      - name: Compare $ScriptVersion between pre-push state and current commit
+        env:
+          # v3.7: SHA of main BEFORE this push (all zeros on a brand-new branch).
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           python3 << 'PYEOF'
@@ -57,7 +64,16 @@ jobs:
               subprocess.run(['git', 'fetch', '--depth=1', 'origin', base], check=False)
               base_commit = base_ref
           else:
-              base_commit = 'HEAD~1'
+              # v3.7: diff against the whole push, not just the last commit.
+              before = os.environ.get('EVENT_BEFORE', '') or ''
+              if (not before) or set(before) == {'0'}:
+                  # workflow_dispatch / first push to the branch: fall back
+                  base_commit = 'HEAD~1'
+              else:
+                  probe = subprocess.run(['git', 'cat-file', '-e', f'{before}^{{commit}}'],
+                                         capture_output=True)
+                  base_commit = before if probe.returncode == 0 else 'HEAD~1'
+          print(f'Comparing against: {base_commit}')
 
           # Which .ps1 / .psm1 changed?
           diff = subprocess.run(

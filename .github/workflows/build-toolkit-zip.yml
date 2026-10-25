@@ -14,6 +14,10 @@ name: Build toolkit zip
 # stale copies). This keeps the "Download from GitHub Releases" fallback
 # link on idezign.ai/toolkit alive - previously the SmartScreen-bypass
 # fallback URL 404'd because no assets were ever attached to releases.
+#
+# v3.7 additions: CHANGELOG-entry gate, ASCII/PS7-syntax guard (PS 5.1
+# safety), dev-file exclusion from the staged zip, EXE version resource +
+# stale-file purge in the NSIS script, and jsDelivr purge verification.
 
 on:
   push:
@@ -108,6 +112,68 @@ jobs:
           print('All scripts match their manifest entries.')
           PYEOF
 
+          # v3.7: the manifest version must also have a CHANGELOG entry.
+          # A heading line starts with "v<VERSION>" followed by a space or
+          # a dash (e.g. "v3.7 - 2026-10-25 - ..."). Catches the "bumped
+          # the manifest, forgot the changelog" drift before it ships.
+          VERSION="${{ steps.ver.outputs.version }}"
+          if grep -qE "^v${VERSION//./\\.}[ -]" CHANGELOG.txt; then
+            echo "CHANGELOG.txt has an entry for v$VERSION."
+          else
+            echo "FAIL - CHANGELOG.txt has no line starting with 'v$VERSION ' or 'v$VERSION-'."
+            echo "Add a v$VERSION heading to CHANGELOG.txt (or fix toolkitVersion in the manifest)."
+            exit 1
+          fi
+
+      # ----------------------------------------------------------------
+      # v3.7: encoding + PS7-syntax guard. The toolkit targets Windows
+      # PowerShell 5.1, which (a) reads a BOM-less file as ANSI, so any
+      # raw UTF-8 byte >= 0x80 turns into mojibake or a parse error, and
+      # (b) does not understand the PS7-only operators ??, ?. and the
+      # ternary. The parse-check below runs under pwsh (PS7) so it would
+      # happily accept all of that - this step is the 5.1 stand-in.
+      # The token regexes are HEURISTIC (they do not tokenize, they grep)
+      # - keep them simple; a false positive is cheaper than a shipped
+      # script that dies on every customer machine.
+      # ----------------------------------------------------------------
+      - name: Guard against non-ASCII (BOM-less) and PS7-only syntax
+        run: |
+          set -uo pipefail
+          shopt -s nullglob
+          FAIL=0
+          for f in scripts/*.ps1 scripts/*.psm1; do
+            # Encoding: bytes >= 0x80 are only OK if the file carries a UTF-8 BOM.
+            if LC_ALL=C grep -qP '[\x80-\xFF]' "$f"; then
+              BOM=$(head -c 3 "$f" | od -An -tx1 | tr -d ' \n')
+              if [ "$BOM" != "efbbbf" ]; then
+                echo "FAIL (encoding): $f contains bytes >= 0x80 but has no UTF-8 BOM - PS 5.1 will read it as ANSI."
+                LC_ALL=C grep -nP '[\x80-\xFF]' "$f" | head -n 5
+                FAIL=1
+              else
+                echo "note: $f has non-ASCII bytes but carries a UTF-8 BOM - OK"
+              fi
+            fi
+            # PS7-only tokens (heuristic): ' ?? ', '?.' after an identifier/paren, ') ? ' ternary.
+            if grep -nP '(\s\?\?\s|\s\?\?=\s)' "$f" | grep -v '^\s*[0-9]*:\s*#' ; then
+              echo "FAIL (PS7 syntax): $f uses the null-coalescing operator (??)."
+              FAIL=1
+            fi
+            if grep -nP '[A-Za-z0-9_\)\]]\?\.[A-Za-z_]' "$f" | grep -v '^\s*[0-9]*:\s*#' ; then
+              echo "FAIL (PS7 syntax): $f uses null-conditional member access (?.)."
+              FAIL=1
+            fi
+            if grep -nP '\)\s\?\s[^\s].*\s:\s' "$f" | grep -v '^\s*[0-9]*:\s*#' ; then
+              echo "FAIL (PS7 syntax): $f looks like it uses a ternary ( ) ? a : b )."
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo ""
+            echo "One or more scripts would break under Windows PowerShell 5.1 - aborting."
+            exit 1
+          fi
+          echo "All scripts are ASCII/BOM-safe and free of PS7-only tokens."
+
       - name: Parse-check every PowerShell script
         shell: pwsh
         run: |
@@ -145,6 +211,15 @@ jobs:
             cp "$f" "$STAGE/"
           done
 
+          # v3.7: never ship dev-only files even if they are sitting in scripts/
+          # (debug harness, startup log, the retired Save PDF tool).
+          for dev in _debug_inspect.ps1 DEBUG-RunToolkit.bat gui_startup.log iDezign_SavePDF.ps1; do
+            if [ -e "$STAGE/$dev" ]; then
+              echo "excluding dev file: $dev"
+              rm -f "$STAGE/$dev"
+            fi
+          done
+
           cp logos/iDezign-ai-logo-v2-transparent.png "$STAGE/"
           cp logos/iDezign-logo-trim.png "$STAGE/"
           cp CHANGELOG.txt "$STAGE/"
@@ -169,11 +244,35 @@ jobs:
           sudo apt-get install -y nsis
           makensis -VERSION
 
+      # v3.7: NSIS VIProductVersion needs exactly four numeric parts.
+      # Pad the manifest version (3.7 -> 3.7.0.0, 3.7.1 -> 3.7.1.0) and
+      # strip anything non-numeric so a tag like 3.7-rc1 can't break it.
+      - name: Pad toolkit version to 4 parts for the EXE version block
+        id: ver4
+        run: |
+          set -euo pipefail
+          RAW="${{ steps.ver.outputs.version }}"
+          IFS='.' read -r -a PARTS <<< "$RAW"
+          V4=""
+          for i in 0 1 2 3; do
+            P="${PARTS[$i]:-0}"
+            # keep only the LEADING digits ("7-rc1" -> "7", "rc1" -> "0")
+            if [[ "$P" =~ ^([0-9]+) ]]; then P="${BASH_REMATCH[1]}"; else P=0; fi
+            V4="${V4}${V4:+.}${P}"
+          done
+          echo "version4=$V4" >> "$GITHUB_OUTPUT"
+          echo "EXE version block: $V4 (from manifest $RAW)"
+
       - name: Build self-extracting EXE (NSIS)
         run: |
           set -euo pipefail
           STAGE=$(cat /tmp/stage_path)
 
+          # v3.7: version resource (shows in Explorer > Properties > Details and
+          # gives SmartScreen/AV a real publisher string) + RMDir /r so files
+          # from an OLDER toolkit (e.g. iDezign_SavePDF.ps1) no longer linger
+          # in %LOCALAPPDATA%\iDezign-Toolkit after an upgrade.
+          # No Icon directive: the repo has no .ico (logos/ are PNG only).
           cat > /tmp/toolkit.nsi << 'NSIEOF'
           Unicode true
           Name "iDezign Toolkit"
@@ -183,7 +282,17 @@ jobs:
           RequestExecutionLevel user
           SetCompressor /SOLID lzma
 
+          VIProductVersion "${VER4}"
+          VIFileVersion "${VER4}"
+          VIAddVersionKey "ProductName"     "iDezign Toolkit"
+          VIAddVersionKey "CompanyName"     "iDezign Technology"
+          VIAddVersionKey "FileDescription" "iDezign Toolkit portable launcher"
+          VIAddVersionKey "FileVersion"     "${VER4}"
+          VIAddVersionKey "ProductVersion"  "${VER}"
+          VIAddVersionKey "LegalCopyright"  "(c) iDezign Technology"
+
           Section
+            RMDir /r "$INSTDIR"
             SetOutPath $INSTDIR
             File /r "${STAGE}/*"
             Exec '"$INSTDIR\iDezign TOOLKIT.bat"'
@@ -192,7 +301,12 @@ jobs:
 
           mkdir -p dist
           rm -f dist/iDezign-Toolkit.exe
-          makensis -V2 -DOUTFILE="$GITHUB_WORKSPACE/dist/iDezign-Toolkit.exe" -DSTAGE="$STAGE" /tmp/toolkit.nsi
+          makensis -V2 \
+            -DOUTFILE="$GITHUB_WORKSPACE/dist/iDezign-Toolkit.exe" \
+            -DSTAGE="$STAGE" \
+            -DVER="${{ steps.ver.outputs.version }}" \
+            -DVER4="${{ steps.ver4.outputs.version4 }}" \
+            /tmp/toolkit.nsi
 
           echo "--- Built .exe ---"
           ls -la dist/iDezign-Toolkit.exe
@@ -260,6 +374,60 @@ jobs:
           fi
 
       # ----------------------------------------------------------------
+      # v3.4.2 add-on: LOUD warning if manifest toolkitVersion has no
+      # matching GitHub Release. v3.7: the site no longer asks the GitHub
+      # API for the latest tag - its JS rewrites the download links to
+      # /releases/download/v<toolkitVersion>/ straight from the manifest,
+      # so a missing release 404s for every visitor (the static fallback
+      # /releases/latest/download/ only covers the no-JS / fetch-failed
+      # case). This warning + the weekly audit's release-health check are
+      # what make that drift visible.
+      #
+      # Root incident: on 2026-07-03 we bumped the manifest to v3.4.1 (for
+      # the Migrate space-safe fix) but forgot to cut the matching GitHub
+      # Release. Site's download URL rewrote to /releases/download/v3.4.1/
+      # which returned 404 until the release was cut. Never again.
+      #
+      # Emits a workflow summary (visible on the run page) AND writes an
+      # ::warning:: annotation (visible in the run's Files-changed view).
+      # Non-blocking: build still succeeds because the release is normally
+      # cut AFTER the build finishes.
+      # ----------------------------------------------------------------
+      - name: Warn if manifest is ahead of GitHub Releases
+        if: github.event_name != 'release' && always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          TAG="v$VERSION"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            {
+              echo "### Release consistency check"
+              echo ""
+              echo "OK: manifest \`toolkitVersion = $VERSION\` has a matching GitHub Release (\`$TAG\`)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "Release consistency OK."
+          else
+            # Print a GitHub Actions annotation - shows up prominently
+            echo "::warning title=Manifest ahead of GitHub Releases::Manifest toolkitVersion is $VERSION but no GitHub Release with tag $TAG exists. The download URL on idezign.ai/toolkit will 404 for that version until the release is cut. Fix: create a Release with tag $TAG at https://github.com/$GITHUB_REPOSITORY/releases/new?tag=$TAG"
+
+            {
+              echo "### WARNING: Manifest ahead of GitHub Releases"
+              echo ""
+              echo "Manifest \`toolkitVersion = $VERSION\` but no GitHub Release with tag \`$TAG\` exists."
+              echo ""
+              echo "The download URL on \`idezign.ai/toolkit\` will 404 until the release is cut."
+              echo "The site rewrites its download links to this version from the manifest (v3.7+), so visitors get a 404 until the release is cut. The GUI update check will also advertise v$VERSION with a download that does not exist yet."
+              echo ""
+              echo "**Fix:** cut the release: [$TAG](https://github.com/$GITHUB_REPOSITORY/releases/new?tag=$TAG)"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo "WARNING: manifest ahead of releases (see summary)."
+          fi
+
+      # ----------------------------------------------------------------
       # v3.4 addition: purge jsDelivr's cache for the two JSON files the
       # idezign.ai/toolkit page fetches at runtime. jsDelivr caches
       # @main branch files for up to 12 HOURS, so without this purge the
@@ -274,10 +442,41 @@ jobs:
       - name: Purge jsDelivr cache (site reads manifest through it)
         if: always()
         run: |
-          for f in iDezign_Versions.json iDezign_SiteContent.json; do
-            echo "Purging: $f"
-            curl -fsS --max-time 30 --retry 2 \
-              "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/scripts/$f" \
-              && echo "" || echo "WARN: purge failed for $f (cache will expire on its own within 12h)"
+          purge_all() {
+            for f in iDezign_Versions.json iDezign_SiteContent.json; do
+              echo "Purging: $f"
+              curl -fsS --max-time 30 --retry 2 \
+                "https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/scripts/$f" \
+                && echo "" || echo "WARN: purge failed for $f (cache will expire on its own within 12h)"
+            done
+          }
+          purge_all
+
+          # v3.7: VERIFY the purge took. Fetch the manifest back through the
+          # CDN and compare toolkitVersion to what we just built. Retry
+          # purge+fetch up to 3 times (20s apart) - jsDelivr's purge is
+          # eventually consistent across edges. Fail-soft: a lingering
+          # mismatch is a ::warning::, never a build failure. (Also fires
+          # when the GUI's update check reads this file - a stale CDN copy
+          # means customers would not see the new version for up to 12h.)
+          EXPECTED="${{ steps.ver.outputs.version }}"
+          CDN_URL="https://cdn.jsdelivr.net/gh/${GITHUB_REPOSITORY}@main/scripts/iDezign_Versions.json"
+          CDN_VER=""
+          for attempt in 1 2 3; do
+            CDN_VER=$(curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$CDN_URL" \
+                      | python3 -c "import json,sys; print(json.load(sys.stdin).get('toolkitVersion',''))" 2>/dev/null || echo "")
+            echo "CDN check $attempt/3: jsDelivr serves toolkitVersion='$CDN_VER' (expected '$EXPECTED')"
+            if [ "$CDN_VER" = "$EXPECTED" ]; then
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep 20
+              purge_all
+            fi
           done
+          if [ "$CDN_VER" = "$EXPECTED" ]; then
+            echo "jsDelivr purge verified - CDN serves v$EXPECTED."
+          else
+            echo "::warning title=jsDelivr still stale::After 3 purge attempts jsDelivr still serves toolkitVersion='$CDN_VER' (expected '$EXPECTED'). The site badge and the GUI update check will lag until the edge cache expires (<=12h)."
+          fi
           echo "jsDelivr purge done - idezign.ai/toolkit will pick up the new manifest on next load."

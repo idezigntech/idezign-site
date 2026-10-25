@@ -8,8 +8,13 @@ name: Weekly consistency audit
 #   1. Manifest-vs-script version verify (each script's embedded version
 #      matches the value in iDezign_Versions.json)
 #   2. PowerShell parse-check across every .ps1/.psm1 in scripts/
-#   3. External URL health (calls the same script the URL-rot workflow
-#      uses so both paths use the same logic)
+#   3. Release health (v3.7): the download URLs that the site and the
+#      GUI's update check hand out must resolve - both the versioned
+#      /releases/download/v<toolkitVersion>/iDezign-Toolkit.exe and the
+#      /releases/latest/download/iDezign-Toolkit.exe redirect must 302.
+#      (The external-URL check used to live here; it duplicated
+#      check-external-urls.yml, which already runs weekly and opens its
+#      own issue, so it was dropped in v3.7.)
 #   4. Presence of required top-level files (README/CHANGELOG etc.)
 #
 # On failure: opens (or updates) a dedup'ed GitHub Issue tagged
@@ -113,21 +118,39 @@ jobs:
           # Note: don't fail the step - collect all audit results, decide at end.
 
       # ----------------------------------------------------------------
-      # 3. External URL health (calls the same script as the URL-rot job)
+      # 3. Release health (v3.7) - replaces the external-URL section,
+      #    which duplicated check-external-urls.yml. GitHub answers a
+      #    release-asset download URL with a 302 to the CDN; anything
+      #    else means the release/tag/asset is missing and every
+      #    "Download .exe" click (site + GUI update check) is broken.
       # ----------------------------------------------------------------
-      - name: External URL check
-        id: urls
-        shell: pwsh
+      - name: Release health (versioned + latest download URLs)
+        id: release
         run: |
-          $rc = 0
-          try {
-              ./.github/scripts/check-external-urls.ps1 2>&1 | Tee-Object -FilePath /tmp/url-audit.txt
-              $rc = $LASTEXITCODE
-          } catch {
-              $rc = 1
-              $_.Exception.Message | Add-Content -Path /tmp/url-audit.txt
-          }
-          "url_rc=$rc" | Add-Content -Path $env:GITHUB_OUTPUT
+          set +e
+          VERSION=$(python3 -c "import json; print(json.load(open('scripts/iDezign_Versions.json'))['toolkitVersion'])" 2>/dev/null)
+          RC=0
+          {
+            echo "Manifest toolkitVersion: ${VERSION:-<unreadable>}"
+            if [ -z "$VERSION" ]; then
+              echo "FAIL  could not read toolkitVersion from scripts/iDezign_Versions.json"
+              RC=1
+            fi
+            for url in \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/iDezign-Toolkit.exe" \
+              "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/iDezign-Toolkit.exe"; do
+              CODE=$(curl -sI --max-time 30 -o /dev/null -w '%{http_code}' "$url")
+              if [ "$CODE" = "302" ]; then
+                echo "OK    $CODE  $url"
+              else
+                echo "FAIL  ${CODE:-000}  $url  (expected 302 redirect to the release asset)"
+                RC=1
+              fi
+            done
+          } > /tmp/release-audit.txt 2>&1
+          cat /tmp/release-audit.txt
+          echo "release_rc=$RC" >> "$GITHUB_OUTPUT"
+          exit 0
 
       # ----------------------------------------------------------------
       # 4. Required top-level files present
@@ -169,9 +192,9 @@ jobs:
             cat /tmp/parse-audit.txt || echo "(no output)"
             echo '```'
             echo ""
-            echo "## External URL check"
+            echo "## Release health (download URLs)"
             echo '```'
-            tail -n 60 /tmp/url-audit.txt 2>/dev/null || echo "(no output)"
+            cat /tmp/release-audit.txt 2>/dev/null || echo "(no output)"
             echo '```'
             echo ""
             echo "## Required files"
@@ -183,11 +206,11 @@ jobs:
           # Decide overall status
           M=${{ steps.manifest.outputs.manifest_rc }}
           P=${{ steps.parse.outputs.parse_rc }}
-          U=${{ steps.urls.outputs.url_rc }}
+          R=${{ steps.release.outputs.release_rc }}   # v3.7: was url_rc
           F=${{ steps.files.outputs.files_rc }}
-          echo "step results: manifest=$M parse=$P url=$U files=$F"
+          echo "step results: manifest=$M parse=$P release=$R files=$F"
 
-          if [ "$M" != "0" ] || [ "$P" != "0" ] || [ "$U" != "0" ] || [ "$F" != "0" ]; then
+          if [ "$M" != "0" ] || [ "$P" != "0" ] || [ "$R" != "0" ] || [ "$F" != "0" ]; then
             echo "overall_status=fail" >> "$GITHUB_OUTPUT"
           else
             echo "overall_status=pass" >> "$GITHUB_OUTPUT"
