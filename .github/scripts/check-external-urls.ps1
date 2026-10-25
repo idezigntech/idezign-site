@@ -132,25 +132,64 @@ foreach ($item in $toCheck) {
     $transient = $false
 
     # First attempt: HEAD (fast, no body)
+    # v3.7: HEAD-first produced false failures - Claude's redirect answers
+    # 405 to HEAD, Ninite answers 200 with Content-Length: 0 to HEAD. So:
+    # HEAD, then if the status is 405/501 OR a 200 with a 0/absent
+    # Content-Length, re-probe with GET and -MaximumRedirection 0 where a
+    # 30x + Location is a SUCCESS (the resource exists; we don't need to
+    # follow it). GET sends 'Range: bytes=0-0' so large binaries return a
+    # 206 (one byte) instead of the whole file; 206 counts as OK.
+    $needGet = $false
     try {
         $resp = Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing `
                     -TimeoutSec $RequestTimeoutSec -MaximumRedirection 5 `
                     -UserAgent $UserAgent -ErrorAction Stop
         $status = [int]$resp.StatusCode
         $ok     = ($status -ge 200 -and $status -lt 400)
+        if ($status -eq 200) {
+            $clen = $null
+            try { $clen = $resp.Headers['Content-Length'] } catch { }
+            if (-not $clen -or ([string]$clen).Trim() -eq '0') {
+                $needGet = $true
+                Write-Host "        HEAD 200 but Content-Length 0/absent - re-probing with GET" -ForegroundColor DarkGray
+            }
+        }
     } catch {
-        # Fallback: GET (some CDNs 405 on HEAD)
+        $needGet = $true
+        $headStatus = 0
+        if ($_.Exception.Response) {
+            try { $headStatus = [int]$_.Exception.Response.StatusCode } catch { }
+        }
+        if ($headStatus -eq 405 -or $headStatus -eq 501) {
+            Write-Host ("        HEAD not allowed (status={0}) - re-probing with GET" -f $headStatus) -ForegroundColor DarkGray
+        }
+    }
+
+    if ($needGet) {
+        # GET fallback: no redirect-following (a 30x with Location = alive),
+        # 1-byte Range so binaries don't download, 2xx/3xx = OK.
         $method = 'GET'
+        $ok = $false
         try {
             $resp = Invoke-WebRequest -Uri $u -Method Get -UseBasicParsing `
-                        -TimeoutSec $RequestTimeoutSec -MaximumRedirection 5 `
-                        -UserAgent $UserAgent -ErrorAction Stop
+                        -TimeoutSec $RequestTimeoutSec -MaximumRedirection 0 `
+                        -UserAgent $UserAgent -Headers @{ 'Range' = 'bytes=0-0' } `
+                        -ErrorAction Stop
             $status = [int]$resp.StatusCode
             $ok     = ($status -ge 200 -and $status -lt 400)
         } catch {
-            $errMsg = $_.Exception.Message
+            # PS 5.1 throws on 3xx when -MaximumRedirection 0 - that's a live URL.
+            $status = 0
             if ($_.Exception.Response) {
                 try { $status = [int]$_.Exception.Response.StatusCode } catch { }
+            }
+            if ($status -ge 300 -and $status -lt 400) {
+                $ok = $true
+                $loc = $null
+                try { $loc = $_.Exception.Response.Headers['Location'] } catch { }
+                if ($loc) { Write-Host ("        redirect -> {0}" -f $loc) -ForegroundColor DarkGray }
+            } else {
+                $errMsg = $_.Exception.Message
             }
         }
     }
