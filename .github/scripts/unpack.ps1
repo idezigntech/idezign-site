@@ -41,7 +41,7 @@ try {
     $aes.Mode = 'CBC'; $aes.Padding = 'PKCS7'; $aes.Key = $ek; $aes.IV = $iv
     $plain = $aes.CreateDecryptor().TransformFinalBlock($ct, 0, $ct.Length)
 
-    $tmp = Join-Path $env:TEMP ("idz_" + [Guid]::NewGuid().ToString('N') + ".zip")
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ("idz_" + [Guid]::NewGuid().ToString('N') + ".zip")
     [IO.File]::WriteAllBytes($tmp, $plain)
     try {
         if (-not (Test-Path $Dest)) { New-Item -ItemType Directory -Path $Dest -Force | Out-Null }
@@ -51,5 +51,6 @@ try {
     }
     exit 0
 } catch {
+    [Console]::Error.WriteLine("unpack.ps1: " + $_.Exception.Message)
     exit 5
 }
