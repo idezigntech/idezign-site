@@ -220,12 +220,12 @@ footer .top{flex-direction:column}
 <li><span class="k">⚠</span><span class="t"><b>Reset to OOBE</b> <span style="color:var(--red);font-style:italic;font-size:12px">(destructive)</span> &nbsp;<span>— Sysprep for imaging (destructive)</span></span></li>
 </ul>
 <div class="foot">
-<!-- v3.7: fallback hrefs use /releases/latest/download/ (GitHub redirects to the newest release asset, so the static page can never point at a tag that does not exist). JS rewrites to the versioned URL for SmartScreen reputation. -->
-<a id="dlExe" href="https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.exe" class="btn-primary">Download .exe &nbsp;↓</a>
-<span class="meta">Windows · One-click · ~270&nbsp;KB</span>
+<!-- Nov 2026: downloads go through /dl/exe and /dl/zip (functions/dl/[asset].js), which emails Eric each download and then 302s to the GitHub Release asset. Without a version it lands on /releases/latest/download/; JS adds ?v=<toolkitVersion> so the final URL is the stable per-version one (SmartScreen reputation). -->
+<a id="dlExe" href="/dl/exe" class="btn-primary">Download .exe &nbsp;↓</a>
+<span class="meta">Windows · Password required · ~270&nbsp;KB</span>
 </div>
 <p style="margin-top:14px;font-size:13px;color:var(--muted);font-weight:300;line-height:1.5">
-Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.zip" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — best if Windows Defender flags the .exe as PUA on first download). Both are the same content; the .zip is friendlier to reputation-strict antivirus.
+Or <a id="dlZip" href="/dl/zip" style="color:var(--red);border-bottom:1px solid rgba(168,40,40,.25);padding-bottom:1px">download as .zip</a> (manual extract — best if Windows Defender flags the .exe as PUA on first download). Both are the same content; the .zip is friendlier to reputation-strict antivirus. Both are password protected &mdash; the .zip opens with <a href="https://www.7-zip.org/" target="_blank" rel="noopener" style="color:var(--red)">7-Zip</a>. Need the password? <a href="tel:+15304106450" style="color:var(--red)">Call Eric</a>.
 </p>
 </div>
 
@@ -439,11 +439,11 @@ if(!mf)return;
 // covers the fallback case and the build/weekly-audit workflows now
 // fail loudly if the manifest version has no matching release.
 if(mf.toolkitVersion){
-  var relBase = "https://github.com/idezigntech/idezign-site/releases/download/v"+mf.toolkitVersion+"/";
+  var q = "?v=" + encodeURIComponent(mf.toolkitVersion);
   var dlExe = document.getElementById("dlExe");
   var dlZip = document.getElementById("dlZip");
-  if(dlExe) dlExe.href = relBase + "iDezign-Toolkit.exe";
-  if(dlZip) dlZip.href = relBase + "iDezign-Toolkit.zip";
+  if(dlExe) dlExe.href = "/dl/exe" + q;
+  if(dlZip) dlZip.href = "/dl/zip" + q;
 }
 var ul=document.querySelector(".tool .feats");
 if(ul && mf.tools && mf.tools.length){
