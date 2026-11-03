@@ -28,6 +28,8 @@ on:
       - 'logos/iDezign-ai-logo-v2-transparent.png'
       - 'logos/iDezign-logo-trim.png'
       - '.github/workflows/build-toolkit-zip.yml'
+      - '.github/scripts/encrypt-payload.py'
+      - '.github/scripts/unpack.ps1'
   workflow_dispatch:
   release:
     types: [published, released]
@@ -227,15 +229,64 @@ jobs:
           echo "--- staged ---"
           ls -la "$STAGE"
 
-      - name: Build the zip
+      # ----------------------------------------------------------------
+      # Nov 2026: password protection. Both downloads are locked with the
+      # TOOLKIT_PASSWORD repo secret (Settings > Secrets and variables >
+      # Actions). No secret = the build stops here, so an unprotected
+      # .zip/.exe can never be committed to dist/ or attached to a release.
+      #   .zip -> AES-256 zip (open with 7-Zip / WinRAR; Explorer can't)
+      #   .exe -> asks for the password, then decrypts an AES-256 payload
+      #           with built-in Windows PowerShell (.github/scripts/unpack.ps1)
+      # ----------------------------------------------------------------
+      - name: Require the toolkit password secret
+        env:
+          TOOLKIT_PASSWORD: ${{ secrets.TOOLKIT_PASSWORD }}
+        run: |
+          if [ -z "${TOOLKIT_PASSWORD}" ]; then
+            echo "::error::TOOLKIT_PASSWORD secret is not set - refusing to build unprotected toolkit downloads."
+            exit 1
+          fi
+          echo "TOOLKIT_PASSWORD present."
+
+      - name: Build the zips (plain for the EXE payload, AES-256 for download)
+        env:
+          TOOLKIT_PASSWORD: ${{ secrets.TOOLKIT_PASSWORD }}
         run: |
           set -euo pipefail
           STAGE=$(cat /tmp/stage_path)
-          mkdir -p dist
-          rm -f dist/iDezign-Toolkit.zip
-          (cd "$STAGE" && zip -X -r "$GITHUB_WORKSPACE/dist/iDezign-Toolkit.zip" .)
-          echo "--- zip contents ---"
-          unzip -l dist/iDezign-Toolkit.zip
+          sudo apt-get install -y -qq p7zip-full >/dev/null
+          mkdir -p dist /tmp/payload
+          rm -f dist/iDezign-Toolkit.zip /tmp/payload/plain.zip
+          # plain zip never leaves the runner - it gets encrypted into the EXE
+          (cd "$STAGE" && zip -q -X -r /tmp/payload/plain.zip .)
+          (cd "$STAGE" && 7z a -tzip -mem=AES256 -p"$TOOLKIT_PASSWORD" "$GITHUB_WORKSPACE/dist/iDezign-Toolkit.zip" . >/dev/null)
+          echo "--- protected zip contents ---"
+          7z l -slt dist/iDezign-Toolkit.zip | grep -E "^(Path|Encrypted|Method) = " | paste - - - | head -40
+          if 7z l -slt dist/iDezign-Toolkit.zip | grep -q "^Encrypted = -"; then
+            echo "::error::found an unencrypted entry in the zip"; exit 1
+          fi
+          python3 .github/scripts/encrypt-payload.py /tmp/payload/plain.zip /tmp/payload/payload.bin
+          cp .github/scripts/unpack.ps1 /tmp/payload/unpack.ps1
+
+      - name: Self-test the EXE payload with PowerShell
+        shell: pwsh
+        env:
+          TOOLKIT_PASSWORD: ${{ secrets.TOOLKIT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $u = '/tmp/payload/unpack.ps1'; $p = '/tmp/payload/payload.bin'
+          $env:IDZ_PW = 'definitely-the-wrong-password'
+          & pwsh -NoProfile -File $u -Payload $p -CheckOnly
+          if ($LASTEXITCODE -ne 2) { throw "wrong password should exit 2, got $LASTEXITCODE" }
+          $env:IDZ_PW = $env:TOOLKIT_PASSWORD
+          & pwsh -NoProfile -File $u -Payload $p -CheckOnly
+          if ($LASTEXITCODE -ne 0) { throw "right password check failed ($LASTEXITCODE)" }
+          $out = '/tmp/payload/selftest'
+          & pwsh -NoProfile -File $u -Payload $p -Dest $out
+          if ($LASTEXITCODE -ne 0) { throw "extract failed ($LASTEXITCODE)" }
+          if (-not (Test-Path (Join-Path $out 'iDezign TOOLKIT.bat'))) { throw "launcher missing after extract" }
+          Remove-Item $out -Recurse -Force
+          Write-Host "Payload self-test passed (wrong pw refused, right pw extracts)."
 
       - name: Install NSIS (modern Windows installer maker)
         run: |
@@ -273,14 +324,69 @@ jobs:
           # from an OLDER toolkit (e.g. iDezign_SavePDF.ps1) no longer linger
           # in %LOCALAPPDATA%\iDezign-Toolkit after an upgrade.
           # No Icon directive: the repo has no .ico (logos/ are PNG only).
+          # Nov 2026: no longer silent - a password page comes first. The
+          # payload is AES-256 encrypted, so opening the .exe with 7-Zip
+          # shows only payload.bin, never the scripts.
           cat > /tmp/toolkit.nsi << 'NSIEOF'
           Unicode true
+          !include "nsDialogs.nsh"
+          !include "LogicLib.nsh"
           Name "iDezign Toolkit"
+          Caption "iDezign Toolkit"
+          BrandingText "iDezign Technology"
           OutFile "${OUTFILE}"
-          SilentInstall silent
           InstallDir "$LOCALAPPDATA\iDezign-Toolkit"
           RequestExecutionLevel user
           SetCompressor /SOLID lzma
+          ShowInstDetails nevershow
+          AutoCloseWindow true
+
+          Var Dialog
+          Var PwField
+          Var Pw
+
+          Page custom PwPage PwLeave
+          Page instfiles
+
+          Function .onInit
+            InitPluginsDir
+            SetOutPath "$PLUGINSDIR"
+            File "${PAYLOAD}/payload.bin"
+            File "${PAYLOAD}/unpack.ps1"
+          FunctionEnd
+
+          Function PwPage
+            nsDialogs::Create 1018
+            Pop $Dialog
+            ${NSD_CreateLabel} 0 0 100% 24u "This toolkit is password protected.$\r$\nEnter the password to continue."
+            Pop $0
+            ${NSD_CreatePassword} 0 32u 100% 13u ""
+            Pop $PwField
+            ${NSD_SetFocus} $PwField
+            nsDialogs::Show
+          FunctionEnd
+
+          Function PwLeave
+            ${NSD_GetText} $PwField $Pw
+            ${If} $Pw == ""
+              MessageBox MB_ICONEXCLAMATION "Please enter the password."
+              Abort
+            ${EndIf}
+            StrCpy $0 $Pw
+            System::Call 'Kernel32::SetEnvironmentVariable(t "IDZ_PW", t r0)'
+            nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\unpack.ps1" -Payload "$PLUGINSDIR\payload.bin" -CheckOnly'
+            Pop $1
+            ${If} $1 == "2"
+              System::Call 'Kernel32::SetEnvironmentVariable(t "IDZ_PW", p 0)'
+              MessageBox MB_ICONSTOP "Wrong password."
+              ${NSD_SetText} $PwField ""
+              Abort
+            ${ElseIf} $1 != "0"
+              System::Call 'Kernel32::SetEnvironmentVariable(t "IDZ_PW", p 0)'
+              MessageBox MB_ICONSTOP "Could not check the password (code $1). Windows PowerShell 5.1 with .NET 4.7.2 or newer is required."
+              Abort
+            ${EndIf}
+          FunctionEnd
 
           VIProductVersion "${VER4}"
           VIFileVersion "${VER4}"
@@ -293,8 +399,14 @@ jobs:
 
           Section
             RMDir /r "$INSTDIR"
-            SetOutPath $INSTDIR
-            File /r "${STAGE}/*"
+            CreateDirectory "$INSTDIR"
+            nsExec::Exec 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\unpack.ps1" -Payload "$PLUGINSDIR\payload.bin" -Dest "$INSTDIR"'
+            Pop $1
+            System::Call 'Kernel32::SetEnvironmentVariable(t "IDZ_PW", p 0)'
+            ${If} $1 != "0"
+              MessageBox MB_ICONSTOP "Could not unpack the toolkit (code $1)."
+              Abort
+            ${EndIf}
             Exec '"$INSTDIR\iDezign TOOLKIT.bat"'
           SectionEnd
           NSIEOF
@@ -303,7 +415,7 @@ jobs:
           rm -f dist/iDezign-Toolkit.exe
           makensis -V2 \
             -DOUTFILE="$GITHUB_WORKSPACE/dist/iDezign-Toolkit.exe" \
-            -DSTAGE="$STAGE" \
+            -DPAYLOAD="/tmp/payload" \
             -DVER="${{ steps.ver.outputs.version }}" \
             -DVER4="${{ steps.ver4.outputs.version4 }}" \
             /tmp/toolkit.nsi
@@ -311,6 +423,12 @@ jobs:
           echo "--- Built .exe ---"
           ls -la dist/iDezign-Toolkit.exe
           file dist/iDezign-Toolkit.exe
+          # the EXE must expose only the encrypted payload + unpacker, never the scripts
+          echo "--- EXE contents (7z view) ---"
+          7z l dist/iDezign-Toolkit.exe | tee /tmp/exe_list.txt
+          if grep -qiE "\.psm1|iDezign_Toolkit_GUI\.ps1|TOOLKIT\.bat" /tmp/exe_list.txt; then
+            echo "::error::plaintext toolkit files are visible inside the EXE"; exit 1
+          fi
 
       - name: Commit zip + exe back to main (if changed)
         # Only meaningful on branch triggers. On 'release: published', the
