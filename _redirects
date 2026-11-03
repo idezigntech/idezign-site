@@ -1,0 +1,5 @@
+# Old cross-link pages now live on the combined homepage
+/com     /   301
+/com/*   /   301
+/ai      /   301
+/ai/*    /   301

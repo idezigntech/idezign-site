@@ -1,7 +1,7 @@
 /**
  * Cloudflare Pages Function: /api/help-intake
  *
- * Handles POST submissions from idezign.ai/help. Generates a short session code,
+ * Handles POST submissions from idezign.com/help (also served on idezign.ai). Generates a short session code,
  * emails Eric via Resend, and returns the code to the page.
  *
  * Required env var (set in Cloudflare Pages dashboard):
@@ -206,11 +206,15 @@ export async function onRequestPost({ request, env }) {
 }
 
 // Allow CORS preflights if you ever post from a different domain (defensive).
-export async function onRequestOptions() {
+const ALLOWED_ORIGINS = ['https://idezign.com', 'https://www.idezign.com', 'https://idezign.ai', 'https://www.idezign.ai'];
+
+export async function onRequestOptions({ request }) {
+  const origin = request.headers.get('Origin') || '';
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': 'https://idezign.ai',
+      'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : 'https://idezign.com',
+      'Vary': 'Origin',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
