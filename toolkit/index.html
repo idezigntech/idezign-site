@@ -422,7 +422,11 @@ Or <a id="dlZip" href="https://github.com/idezigntech/idezign-site/releases/late
 // If a fetch fails, the hardcoded HTML fallback stays as-is.
 // ============================================================
 (function(){
-var BASE = "https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/";
+// v3.8: read the manifest from THIS site (same deploy as the page) instead of
+// jsDelivr. jsDelivr caches @main for up to 12 hours and throttles purges, so
+// after every release the badge / tool list / download links lagged behind.
+// Same-origin copy updates the moment the site deploys.
+var BASE = "/scripts/";
 var t = Date.now();
 
 // --- 1. Main toolkit tile ---------------------------------
