@@ -17,7 +17,8 @@
 #  Run as Administrator. No reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.10.25-virusscan-v1.1-desktop-kfm'
+$ScriptVersion = '2026.11.09-virusscan-v1.2-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 #region --- Safety + module load -------------------------------------------
 
@@ -191,6 +192,23 @@ if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
 }
 
 #endregion
+
+# v3.8: record this run on the machine + show the "done" message (popup -
+# a Full scan runs for hours; the box should announce when it is finished).
+try {
+    if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+        $doneStatus  = 'OK'
+        $doneSummary = "$scanType scan: no threats detected"
+        if ($scanError) {
+            $doneStatus = 'Failed'; $doneSummary = "$scanType scan error: $scanError"
+        } elseif ($newThreats) {
+            $doneStatus = 'Attention'; $doneSummary = ("{0} scan: {1} threat(s) detected - see Protection history" -f $scanType, @($newThreats).Count)
+        } elseif (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
+            $doneStatus = 'Attention'; $doneSummary = 'Defender cmdlets not available - nothing scanned'
+        }
+        Complete-iDezignRun -Tool 'Virus Scan' -Version $ScriptVersion -Started $RunStarted -Status $doneStatus -Summary $doneSummary
+    }
+} catch { }
 
 Write-Host ""
 Write-Host "Press any key to close this window..." -ForegroundColor DarkGray

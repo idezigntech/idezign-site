@@ -11,12 +11,12 @@
 #     model - required for tools that self-stage and reboot, like Cleanup)
 #   * Double-click the header to maximize/restore; drag the header to move
 #
-#  Version: 2026.10.25-gui-v3.0-update-check
+#  Version: 2026.11.09-gui-v3.1-last-run
 # ============================================================================
 
 # v3.7: GUI v3.0 - real update check against the published manifest (see the
 # "Update check" block near the end of the file).
-$ScriptVersion = '2026.10.25-gui-v3.0-update-check'
+$ScriptVersion = '2026.11.09-gui-v3.1-last-run'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -111,9 +111,10 @@ $DefaultToolDefs = @(
     [PSCustomObject]@{ key='Migrate';     displayName='Migrate';       subtitle='Back up + move user data';                  icon=([char]::ConvertFromUtf32(0x1FABF)); scriptFile='iDezign_Migration_Utility.ps1'; destructive=$false; order=4 }
     [PSCustomObject]@{ key='DISM';        displayName='DISM';          subtitle='Component store + system file repair';      icon=([char]::ConvertFromUtf32(0x1FA7A)); scriptFile='iDezign_DISM.ps1';              destructive=$false; order=5 }
     [PSCustomObject]@{ key='VirusScan';   displayName='Virus Scan';    subtitle='Defender quick/full scan + threat log';     icon=([char]::ConvertFromUtf32(0x1F9A0)); scriptFile='iDezign_VirusScan.ps1';         destructive=$false; order=6 }
-    [PSCustomObject]@{ key='SyncDrives';  displayName='Sync Drives';   subtitle='Safe two-way folder sync (trash-backed)';   icon=([char]::ConvertFromUtf32(0x1F504)); scriptFile='iDezign_SyncDrives.ps1';        destructive=$false; order=7 }
-    [PSCustomObject]@{ key='Duplicate';   displayName='Duplicate';     subtitle='One-way copy between any two locations';    icon=([char]::ConvertFromUtf32(0x1F4CB)); scriptFile='iDezign_Duplicate.ps1';         destructive=$false; order=8 }
-    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=9 }
+    [PSCustomObject]@{ key='TeamViewer';  displayName='TeamViewer';    subtitle='Install iDezign remote-support Host + show ID'; icon=([char]::ConvertFromUtf32(0x1F5A5)); scriptFile='iDezign_TeamViewer.ps1';    destructive=$false; order=7 }
+    [PSCustomObject]@{ key='SyncDrives';  displayName='Sync Drives';   subtitle='Safe two-way folder sync (trash-backed)';   icon=([char]::ConvertFromUtf32(0x1F504)); scriptFile='iDezign_SyncDrives.ps1';        destructive=$false; order=8 }
+    [PSCustomObject]@{ key='Duplicate';   displayName='Duplicate';     subtitle='One-way copy between any two locations';    icon=([char]::ConvertFromUtf32(0x1F4CB)); scriptFile='iDezign_Duplicate.ps1';         destructive=$false; order=9 }
+    [PSCustomObject]@{ key='Reset';       displayName='Reset to OOBE'; subtitle='Sysprep for imaging (destructive)';         icon=([char]::ConvertFromUtf32(0x26A0));  scriptFile='iDezign_Reset_to_OOBE.ps1';     destructive=$true;  order=10 }
 )
 $ToolDefs = $null
 # v3.7: default was '2.0', which painted a bogus "TOOLKIT v2.0" header whenever
@@ -261,7 +262,13 @@ Write-Diag ("manifest loaded: {0} tools, toolkit v{1}" -f $ToolDefs.Count, $Tool
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto"/>
           <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>   <!-- v3.1: last-run line -->
         </Grid.RowDefinitions>
+
+        <TextBlock x:Name="lblLastRun" Grid.Row="2" Text="" FontSize="11"
+                   Foreground="{StaticResource muted2}" Margin="2,6,0,0"
+                   TextTrimming="CharacterEllipsis" Cursor="Hand"
+                   ToolTip="Click for this PC's toolkit run history"/>
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,14" VerticalAlignment="Center">
           <Border Width="34" Height="1" Background="#A82828" VerticalAlignment="Center" Margin="0,2,14,0"/>
@@ -306,7 +313,57 @@ $ui = @{
     BtnClose  = Find-Control 'btnClose'
     RowsPanel = Find-Control 'RowsPanel'
     Status    = Find-Control 'lblStatus'
+    LastRun   = Find-Control 'lblLastRun'
 }
+
+# --- Last-run line (v3.1) ------------------------------------------------------
+# Every tool records its runs in C:\ProgramData\iDezign\Toolkit\history.json
+# (written by Complete-iDezignRun in iDezign_Common.psm1). Show the most recent
+# one under the script list so opening the toolkit on any machine answers
+# "was it ever run here, when, and with which version?". Click = full history.
+# Re-read whenever the window regains focus, so it updates after a tool finishes.
+$script:HistoryFile = Join-Path $env:ProgramData 'iDezign\Toolkit\history.json'
+function Get-ToolkitHistory {
+    try {
+        if (-not (Test-Path -LiteralPath $script:HistoryFile)) { return @() }
+        $all = @(Get-Content -Raw -Encoding UTF8 -LiteralPath $script:HistoryFile | ConvertFrom-Json -ErrorAction Stop)
+        return @($all | Sort-Object { [string]$_.Finished } -Descending)
+    } catch { return @() }
+}
+function Format-HistoryWhen {
+    param([string]$Iso)
+    try { return ([datetime]$Iso).ToString('MMM d, yyyy h:mm tt') } catch { return $Iso }
+}
+function Update-LastRunLine {
+    try {
+        $h = @(Get-ToolkitHistory)
+        if ($h.Count -eq 0) {
+            $ui.LastRun.Text = 'Last run on this PC: no recorded runs yet'
+        } else {
+            $r = $h[0]
+            $ui.LastRun.Text = ("Last run on this PC: {0} - {1} - v{2} - {3}   ({4} total)" -f $r.Tool, (Format-HistoryWhen $r.Finished), $r.ToolkitVersion, $r.Status, $h.Count)
+        }
+    } catch { }
+}
+Update-LastRunLine
+$window.add_Activated({ Update-LastRunLine })
+$ui.LastRun.add_MouseLeftButtonUp({
+    try {
+        $h = @(Get-ToolkitHistory)
+        if ($h.Count -eq 0) {
+            $msg = "No toolkit runs are recorded on this PC yet.`r`n`r`nHistory starts with toolkit v3.8 - each tool adds a line when it finishes."
+        } else {
+            $lines = New-Object System.Collections.Generic.List[string]
+            foreach ($r in ($h | Select-Object -First 15)) {
+                [void]$lines.Add(("{0,-20}  {1,-22}  v{2,-6}  {3}" -f (Format-HistoryWhen $r.Finished), $r.Tool, $r.ToolkitVersion, $r.Status))
+                if ($r.Summary) { [void]$lines.Add(("        {0}" -f (([string]$r.Summary) -replace "`r?`n", ' | '))) }
+            }
+            $msg = ("Toolkit runs on {0} (newest first, {1} recorded):`r`n`r`n" -f $env:COMPUTERNAME, $h.Count) + ($lines -join "`r`n") +
+                   "`r`n`r`nFull log: $($script:HistoryFile)"
+        }
+        [System.Windows.MessageBox]::Show($msg, 'iDezign Toolkit - Run history', [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information) | Out-Null
+    } catch { Write-Diag ("history popup failed: {0}" -f $_.Exception.Message) }
+})
 
 # Toolkit version label
 # v3.7: no manifest -> say so instead of inventing a version number.

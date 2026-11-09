@@ -59,7 +59,8 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped whenever the HTML report format changes.
 # Visible in the HTML report header so we can verify deployed version at a glance.
-$ScriptVersion = '2026.10.25-v3.7-honest-verdicts'
+$ScriptVersion = '2026.11.09-v3.8-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -2067,6 +2068,31 @@ try {
     $vDetails += Add-VerifyLine 'INFO' '[opt]' 'App: Malwarebytes installer staged' $mwbStatus
     $vDetails += ""
 
+    # ===== Toolkit run history (v3.8) =====
+    # Every tool records its runs in C:\ProgramData\iDezign\Toolkit\history.json
+    # (+ HKLM:\SOFTWARE\iDezign\Toolkit). Answer "was the toolkit ever run on
+    # this machine, when, and which version?" right in the report.
+    try {
+        $tkHistory = @()
+        if (Get-Command Get-iDezignRunHistory -ErrorAction SilentlyContinue) { $tkHistory = @(Get-iDezignRunHistory -Last 8) }
+        if ($tkHistory.Count -eq 0) {
+            $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Toolkit: last run on this PC' 'no recorded runs (history starts with toolkit v3.8)'
+        } else {
+            $lastCleanup = $tkHistory | Where-Object { $_.Tool -eq 'Cleanup' } | Select-Object -First 1
+            if ($lastCleanup) {
+                $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Toolkit: last full Cleanup' ("{0}  (toolkit v{1}, {2})" -f ([string]$lastCleanup.Finished).Replace('T',' '), $lastCleanup.ToolkitVersion, $lastCleanup.Status)
+            } else {
+                $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Toolkit: last full Cleanup' 'none recorded'
+            }
+            foreach ($h in $tkHistory) {
+                $vDetails += Add-VerifyLine 'INFO' '[opt]' ("Toolkit run: {0}" -f $h.Tool) ("{0}  v{1}  {2}" -f ([string]$h.Finished).Replace('T',' '), $h.ToolkitVersion, $h.Status)
+            }
+        }
+    } catch {
+        $vDetails += Add-VerifyLine 'INFO' '[opt]' 'Toolkit: run history' 'could not read'
+    }
+    $vDetails += ""
+
     # ===== Security configuration =====
     # REPAIR account exists and is in Administrators
     # v3.1: LocalAccounts cmdlets sometimes don't auto-load on Win 11 25H2. Force
@@ -3009,6 +3035,17 @@ Write-Host ""
 # Pause so the elevated PowerShell window doesn't auto-close on script exit.
 # (Same reason we added this to the remediation script - launching via .bat
 # with Start-Process -Verb RunAs spawns a new window that closes on exit.)
+# v3.8: record this run on the machine (no popup - Diagnostics is quick and
+# already opens the report; the console banner is enough).
+try {
+    if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+        $doneStatus = 'OK'
+        if ($txtOverall -eq 'CRITICAL') { $doneStatus = 'Failed' } elseif ($txtOverall -eq 'ATTENTION') { $doneStatus = 'Attention' }
+        Complete-iDezignRun -Tool 'Diagnostics' -Version $ScriptVersion -Started $RunStarted -Status $doneStatus `
+            -Summary ("Overall: {0}  ({1} critical, {2} attention, {3} ok)" -f $txtOverall, $txtCrit, $txtAttn, $txtOk) -NoPopup
+    }
+} catch { }
+
 # v3.7: skipped in -Unattended mode so a scheduled task can actually finish.
 if (-not $Unattended) {
     Read-Host "Press Enter to close this window"

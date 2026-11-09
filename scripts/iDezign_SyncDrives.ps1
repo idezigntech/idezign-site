@@ -92,7 +92,8 @@ param(
 # FIRST executable statement in a PowerShell script (only comments and the
 # doc-block are allowed before it). Putting a string assignment before it
 # makes PS reject [CmdletBinding()] and the whole script fails to parse.
-$ScriptVersion = '2026.10.25-syncdrives-v1.2-enum-safety'
+$ScriptVersion = '2026.11.09-syncdrives-v1.3-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 # v3.7: runtime edition check (a #Requires -PSEdition line would have to go
 # above param() and break the ordering rule noted above). Windows PowerShell
@@ -817,6 +818,18 @@ if ($DryRun) {
     }
 } else {
     Write-Log "Sync complete." "DO"
+    # v3.8: record this run on the machine + show the "done" popup. This tool
+    # does not otherwise load the shared module, so pull it in here if present.
+    try {
+        if (-not (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue)) {
+            $idzModule = Join-Path $PSScriptRoot 'iDezign_Common.psm1'
+            if (Test-Path -LiteralPath $idzModule) { Import-Module $idzModule -Force -ErrorAction SilentlyContinue }
+        }
+        if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+            Complete-iDezignRun -Tool 'Sync Drives' -Version $ScriptVersion -Started $RunStarted -Status 'OK' `
+                -Summary ("{0} sync complete`n{1}  <->  {2}" -f $Mode, $DriveA, $DriveB)
+        }
+    } catch { }
 }
 
 # Keep the window open when launched from the GUI (no -NoExit) so the user

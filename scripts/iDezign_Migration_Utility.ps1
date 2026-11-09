@@ -53,7 +53,8 @@ param(
     [string]$RestoreAction = 'Prompt'
 )
 
-$ScriptVersion = '2026.10.25-migrate-v2.2-skip-fix'
+$ScriptVersion = '2026.11.09-migrate-v2.3-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 $ErrorActionPreference = 'Continue'
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 
@@ -483,6 +484,14 @@ if ($Mode -eq 'Backup') {
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
 
+    # v3.8: record this run on the machine + show the "done" popup.
+    try {
+        if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+            Complete-iDezignRun -Tool 'Migrate (backup)' -Version $ScriptVersion -Started $RunStarted -Status 'OK' `
+                -Summary "Backup written to:`n$BackupRoot"
+        }
+    } catch { }
+
     Write-Host "Press any key to close this window..." -ForegroundColor DarkGray
     try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }
 }
@@ -599,6 +608,14 @@ if ($Mode -eq 'Restore') {
     Write-Host "  Restored from: $BackupPath" -ForegroundColor DarkGray
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
+
+    # v3.8: record this run on the machine + show the "done" popup.
+    try {
+        if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+            Complete-iDezignRun -Tool 'Migrate (restore)' -Version $ScriptVersion -Started $RunStarted -Status 'OK' `
+                -Summary "Restored from:`n$BackupPath"
+        }
+    } catch { }
 
     Write-Host "Press any key to close this window..." -ForegroundColor DarkGray
     try { $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown') } catch { }

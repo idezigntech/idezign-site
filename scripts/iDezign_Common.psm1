@@ -16,6 +16,8 @@
 #    Start-iDezignTranscript- wraps Start-Transcript with sane defaults
 #    Get-iDezignEssentialServices - shared essential-service list (v3.7)
 #    Get-iDezignConsoleUserSid    - logged-on console user name/SID/profile (v3.7)
+#    Complete-iDezignRun          - history record + "done" message (v3.8)
+#    Get-iDezignRunHistory        - last N toolkit runs on this machine (v3.8)
 #
 #  Loading pattern (in each consuming script):
 #    $modulePath = Join-Path $PSScriptRoot 'iDezign_Common.psm1'
@@ -28,7 +30,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.10.25-v3.7-args-quoting'
+$script:ModuleVersion = '2026.11.09-v3.8-run-history'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -1654,7 +1656,205 @@ function Get-iDezignConsoleUserSid {
 }
 #endregion
 
+#region --- Run history + completion message (v3.8) -------------------------
+<#
+.SYNOPSIS
+    Run history: every toolkit tool records "what ran, when, which version,
+    how it ended" on the machine itself, so the next visit (or a remote
+    session) can answer "was the toolkit ever run here, and when?".
+
+.DESCRIPTION
+    Two stores, both machine-wide and both tiny:
+      * C:\ProgramData\iDezign\Toolkit\history.json - array of the last 200
+        runs (Tool, ScriptVersion, ToolkitVersion, Status, Summary, Started,
+        Finished, DurationMin, User, Computer).
+      * HKLM:\SOFTWARE\iDezign\Toolkit - LastRunTool / LastRunTime /
+        LastRunToolkitVersion / LastRunStatus, plus the same four values under
+        a per-tool subkey. One-line check from anywhere, even remotely:
+            reg query HKLM\SOFTWARE\iDezign\Toolkit /s
+    Nothing leaves the machine. Survives reboots and (being ProgramData +
+    HKLM) is visible to every account. Failures here never break a tool.
+#>
+$script:iDzHistoryDir  = Join-Path $env:ProgramData 'iDezign\Toolkit'
+$script:iDzHistoryFile = Join-Path $script:iDzHistoryDir 'history.json'
+$script:iDzHistoryKey  = 'HKLM:\SOFTWARE\iDezign\Toolkit'
+
+function Get-iDezignToolkitVersion {
+    # toolkitVersion from the manifest that sits next to this module.
+    [CmdletBinding()]
+    param()
+    try {
+        $mfPath = Join-Path $PSScriptRoot 'iDezign_Versions.json'
+        if (Test-Path -LiteralPath $mfPath) {
+            $mf = Get-Content -Raw -Encoding UTF8 -LiteralPath $mfPath | ConvertFrom-Json -ErrorAction Stop
+            if ($mf.toolkitVersion) { return [string]$mf.toolkitVersion }
+        }
+    } catch { }
+    return 'unknown'
+}
+
+function Get-iDezignRunHistory {
+    # Newest first. Returns @() when the toolkit has never recorded a run.
+    [CmdletBinding()]
+    param([int]$Last = 20)
+    try {
+        if (-not (Test-Path -LiteralPath $script:iDzHistoryFile)) { return @() }
+        $all = @(Get-Content -Raw -Encoding UTF8 -LiteralPath $script:iDzHistoryFile | ConvertFrom-Json -ErrorAction Stop)
+        $sorted = @($all | Sort-Object { [string]$_.Finished } -Descending)
+        if ($Last -gt 0 -and $sorted.Count -gt $Last) { return @($sorted[0..($Last - 1)]) }
+        return $sorted
+    } catch {
+        return @()
+    }
+}
+
+function Write-iDezignRunRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Tool,
+        [string]   $Version = '',
+        [ValidateSet('OK','Attention','Failed')] [string] $Status = 'OK',
+        [string]   $Summary = '',
+        [datetime] $Started = (Get-Date)
+    )
+    $finished = Get-Date
+    $tkVer    = Get-iDezignToolkitVersion
+    $rec = [PSCustomObject]@{
+        Tool           = $Tool
+        ScriptVersion  = $Version
+        ToolkitVersion = $tkVer
+        Status         = $Status
+        Summary        = $Summary
+        Started        = $Started.ToString('s')
+        Finished       = $finished.ToString('s')
+        DurationMin    = [math]::Round(($finished - $Started).TotalMinutes, 1)
+        User           = $env:USERNAME
+        Computer       = $env:COMPUTERNAME
+    }
+    # 1) JSON history (last 200)
+    try {
+        if (-not (Test-Path -LiteralPath $script:iDzHistoryDir)) {
+            New-Item -Path $script:iDzHistoryDir -ItemType Directory -Force | Out-Null
+        }
+        $all = @()
+        if (Test-Path -LiteralPath $script:iDzHistoryFile) {
+            try { $all = @(Get-Content -Raw -Encoding UTF8 -LiteralPath $script:iDzHistoryFile | ConvertFrom-Json -ErrorAction Stop) } catch { $all = @() }
+        }
+        $all = @($all) + $rec
+        if ($all.Count -gt 200) { $all = @($all[($all.Count - 200)..($all.Count - 1)]) }
+        # ConvertTo-Json unwraps a single-element array on PS 5.1 - force brackets.
+        $json = if ($all.Count -eq 1) { '[' + ($all[0] | ConvertTo-Json -Depth 4) + ']' } else { $all | ConvertTo-Json -Depth 4 }
+        $json | Set-Content -LiteralPath $script:iDzHistoryFile -Encoding UTF8
+    } catch { }
+    # 2) Registry "last run" markers (machine-wide + per tool)
+    try {
+        # -ErrorAction Stop everywhere so any failure lands in the catch
+        # silently instead of printing red non-terminating errors.
+        $toolKey = $script:iDzHistoryKey + '\' + ($Tool -replace '[\\/:*?"<>|]', '_')
+        foreach ($k in @($script:iDzHistoryKey, $toolKey)) {
+            if (-not (Test-Path $k -ErrorAction Stop)) { New-Item -Path $k -Force -ErrorAction Stop | Out-Null }
+            Set-ItemProperty -Path $k -Name 'LastRunTool'           -Value $Tool                   -Type String -ErrorAction Stop
+            Set-ItemProperty -Path $k -Name 'LastRunTime'           -Value $finished.ToString('s') -Type String -ErrorAction Stop
+            Set-ItemProperty -Path $k -Name 'LastRunToolkitVersion' -Value $tkVer                  -Type String -ErrorAction Stop
+            Set-ItemProperty -Path $k -Name 'LastRunScriptVersion'  -Value $Version                -Type String -ErrorAction Stop
+            Set-ItemProperty -Path $k -Name 'LastRunStatus'         -Value $Status                 -Type String -ErrorAction Stop
+        }
+    } catch { }
+    return $rec
+}
+
+function Show-iDezignDoneMessage {
+    <#
+        The "this computer is finished" signal: a big console banner, a
+        system sound, and (unless -NoPopup or a non-interactive session) a
+        topmost message box that sits above everything until acknowledged -
+        visible across the room or through a remote session.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Tool,
+        [ValidateSet('OK','Attention','Failed')] [string] $Status = 'OK',
+        [string] $Summary = '',
+        [double] $DurationMin = 0,
+        [switch] $NoPopup
+    )
+    $tkVer = Get-iDezignToolkitVersion
+    $color = switch ($Status) { 'OK' { 'Green' } 'Attention' { 'Yellow' } default { 'Red' } }
+    $word  = switch ($Status) { 'OK' { 'COMPLETE' } 'Attention' { 'COMPLETE - NEEDS ATTENTION' } default { 'FAILED' } }
+    $when  = Get-Date -Format 'yyyy-MM-dd HH:mm'
+
+    Write-Host ""
+    Write-Host "############################################################" -ForegroundColor $color
+    Write-Host ("   {0} : {1}" -f $Tool.ToUpper(), $word)                      -ForegroundColor $color
+    Write-Host ("   {0}  |  Toolkit v{1}  |  {2}" -f $env:COMPUTERNAME, $tkVer, $when) -ForegroundColor $color
+    if ($DurationMin -gt 0) { Write-Host ("   Took {0} min" -f $DurationMin) -ForegroundColor $color }
+    if ($Summary) { foreach ($ln in ($Summary -split "`n")) { Write-Host ("   {0}" -f $ln) -ForegroundColor $color } }
+    Write-Host "############################################################" -ForegroundColor $color
+    Write-Host ""
+
+    if ($NoPopup -or -not [Environment]::UserInteractive) { return }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        try {
+            if ($Status -eq 'Failed') { [System.Media.SystemSounds]::Hand.Play() }
+            elseif ($Status -eq 'Attention') { [System.Media.SystemSounds]::Exclamation.Play() }
+            else { [System.Media.SystemSounds]::Asterisk.Play() }
+        } catch { }
+        $body = "{0} on {1}`r`n{2}`r`n`r`nToolkit v{3}   -   finished {4}" -f $Tool, $env:COMPUTERNAME, $word, $tkVer, $when
+        if ($DurationMin -gt 0) { $body += ("   -   took {0} min" -f $DurationMin) }
+        if ($Summary) { $body += "`r`n`r`n" + ($Summary -replace "`n", "`r`n") }
+        $icon = switch ($Status) {
+            'OK'        { [System.Windows.Forms.MessageBoxIcon]::Information }
+            'Attention' { [System.Windows.Forms.MessageBoxIcon]::Warning }
+            default     { [System.Windows.Forms.MessageBoxIcon]::Error }
+        }
+        # Invisible topmost owner so the box lands ABOVE every other window.
+        $owner = New-Object System.Windows.Forms.Form
+        $owner.TopMost = $true
+        $owner.ShowInTaskbar = $false
+        $owner.StartPosition = 'CenterScreen'
+        $owner.Opacity = 0
+        $owner.Show()
+        try {
+            [void][System.Windows.Forms.MessageBox]::Show($owner, $body, ("iDezign Toolkit - {0} {1}" -f $Tool, $word),
+                [System.Windows.Forms.MessageBoxButtons]::OK, $icon)
+        } finally {
+            $owner.Close(); $owner.Dispose()
+        }
+    } catch { }
+}
+
+function Complete-iDezignRun {
+    <#
+        The one call every tool makes when it finishes: writes the history
+        record, then shows the done message. Never throws.
+          Complete-iDezignRun -Tool 'DISM' -Version $ScriptVersion `
+              -Started $RunStarted -Status OK -Summary 'Store healthy'
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Tool,
+        [string]   $Version = '',
+        [ValidateSet('OK','Attention','Failed')] [string] $Status = 'OK',
+        [string]   $Summary = '',
+        [datetime] $Started = (Get-Date),
+        [switch]   $NoPopup
+    )
+    try {
+        $rec = Write-iDezignRunRecord -Tool $Tool -Version $Version -Status $Status -Summary $Summary -Started $Started
+        $dur = 0
+        if ($rec -and $rec.DurationMin) { $dur = [double]$rec.DurationMin }
+        Show-iDezignDoneMessage -Tool $Tool -Status $Status -Summary $Summary -DurationMin $dur -NoPopup:$NoPopup
+    } catch { }
+}
+#endregion
+
 Export-ModuleMember -Function `
+    Get-iDezignToolkitVersion, `
+    Get-iDezignRunHistory, `
+    Write-iDezignRunRecord, `
+    Show-iDezignDoneMessage, `
+    Complete-iDezignRun, `
     Test-PendingReboot, `
     Write-iDezignAction, `
     Get-RemoteFile, `

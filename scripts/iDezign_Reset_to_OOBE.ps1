@@ -48,7 +48,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner.
-$ScriptVersion = '2026.10.25-reset-v1.1-bitlocker-check'
+$ScriptVersion = '2026.11.09-reset-v1.2-run-history'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -459,6 +459,16 @@ if (-not (Test-Path $sysprepExe)) {
     Pause
     exit 1
 }
+
+# v3.8: record the reset in the run history BEFORE sysprep takes the machine
+# down (no popup - the triple confirm already happened). The record lives in
+# ProgramData/HKLM, so the next owner's first Diagnostics run shows that this
+# box was reset with the toolkit, and when.
+try {
+    if (Get-Command Write-iDezignRunRecord -ErrorAction SilentlyContinue) {
+        [void](Write-iDezignRunRecord -Tool 'Reset to OOBE' -Version $ScriptVersion -Status 'OK' -Summary 'sysprep /oobe /generalize /shutdown launched')
+    }
+} catch { }
 
 # Use the timeout-aware launcher if available, with a 60-min cap.
 # Sysprep that takes longer than that is almost certainly stuck.

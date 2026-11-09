@@ -75,7 +75,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.10.25-v3.7-resume-fix-26h2'
+$ScriptVersion = '2026.11.09-v3.8-run-history'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -3881,6 +3881,11 @@ if ($doRenameComputer) {
 
 #region --- 6. Wrap up + reboot ----------------------------------------------
 
+# v3.8: when did this whole run begin? state.json carries the original start
+# time across every update reboot - grab it before the file is deleted below.
+$runStarted = Get-Date
+try { if ($state -and $state.Created) { $runStarted = [datetime]$state.Created } } catch { }
+
 if (Test-Path $StateFile) {
     Remove-Item -Path $StateFile -Force -ErrorAction SilentlyContinue
 }
@@ -3900,6 +3905,27 @@ Write-Host ""
 # Stop transcript before the user-facing reboot prompt so the log file is
 # closed and flushed even if the user takes a long time to answer.
 try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch { }
+
+# v3.8: THE "this computer is done" signal. Writes the run-history record
+# (C:\ProgramData\iDezign\Toolkit\history.json + HKLM:\SOFTWARE\iDezign\Toolkit)
+# and raises a topmost popup with a sound, so a machine left running across
+# the bench - or watched through TeamViewer - announces that Windows Update,
+# installs, cleanup and DISM are all finished. Shown BEFORE the reboot prompt.
+try {
+    if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+        $doneStatus = 'OK'
+        $doneLines  = @('Windows Update loop, installs, cleanup and DISM are finished.')
+        if ($scanFailed) {
+            $doneStatus = 'Attention'
+            $doneLines += 'Windows Update scan FAILED - run Windows Update manually.'
+        }
+        if ($skipResetBase) { $doneLines += 'DISM ran without /resetbase (pending operations).' }
+        if ($mbFreed)       { $doneLines += ("Approx {0} MB freed by native cleanup." -f $mbFreed) }
+        if ($doRenameComputer -or $doRenameUser -or $doInstallClaude) { $doneLines += 'A reboot is still required.' }
+        Complete-iDezignRun -Tool 'Cleanup' -Version $ScriptVersion -Started $runStarted -Status $doneStatus `
+            -Summary ($doneLines -join "`n")
+    }
+} catch { }
 
 if (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
     $reasonParts = @()

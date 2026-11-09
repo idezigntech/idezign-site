@@ -35,7 +35,8 @@ param(
     [string]$Mode
 )
 
-$ScriptVersion = '2026.10.25-duplicate-v1.1-root-mirror-guards'
+$ScriptVersion = '2026.11.09-duplicate-v1.2-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 # v3.7: launched from the GUI there is no -NoExit, so the window vanishes
 # the instant the script exits and the user never sees the result. Every
@@ -376,6 +377,18 @@ try {
     Write-Host ("  Exit code: {0} (robocopy bitflag)" -f $rc) -ForegroundColor DarkGray
     Write-Host ("  Log      : {0}" -f $logFile) -ForegroundColor DarkGray
     Write-Host "============================================================" -ForegroundColor Cyan
+
+    # v3.8: record this run on the machine + show the "done" popup (long
+    # copies finish unattended). Dry-runs are recorded without a popup.
+    try {
+        if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+            $doneStatus = 'OK'
+            if ($rc -ge 8) { $doneStatus = 'Failed' }
+            $doneSummary = ("{0}: {1}`n{2}`n-> {3}" -f $Mode, $status, $Source, $Destination)
+            Complete-iDezignRun -Tool 'Duplicate' -Version $ScriptVersion -Started $RunStarted -Status $doneStatus `
+                -Summary $doneSummary -NoPopup:($Mode -eq 'DryRun')
+        }
+    } catch { }
 
     # v3.7: pause before every exit so the GUI-launched window stays readable.
     if ($rc -ge 8) {

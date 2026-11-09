@@ -14,7 +14,8 @@
 #  Run as Administrator. Closes when done; no auto-reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.10.25-dism-v1.2-sfc-encoding'
+$ScriptVersion = '2026.11.09-dism-v1.3-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 #region --- Safety + module load -------------------------------------------
 
@@ -300,6 +301,18 @@ if (Test-Path $logPath) {
 Write-Host ""
 
 try { Stop-Transcript | Out-Null } catch { }
+
+# v3.8: record this run on the machine + show the "done" message (popup -
+# DISM/SFC runs long enough that nobody is watching when it finishes).
+try {
+    if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+        $doneStatus = 'OK'
+        if ($afterStatus -in @('broken','unfixable','failed') -or $sfcStatus -in @('unfixable','failed')) { $doneStatus = 'Failed' }
+        elseif ($afterStatus -ne 'healthy' -or $sfcStatus -eq 'unknown') { $doneStatus = 'Attention' }
+        Complete-iDezignRun -Tool 'DISM' -Version $ScriptVersion -Started $RunStarted -Status $doneStatus `
+            -Summary ("Component store: {0} -> {1}`nSFC: {2}" -f $beforeStatus, $afterStatus, $sfcStatus)
+    }
+} catch { }
 
 Write-Host "Press any key to close this window..." -ForegroundColor DarkGray
 $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')

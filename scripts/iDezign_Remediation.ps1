@@ -31,7 +31,8 @@ $ErrorActionPreference = 'Continue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.10.25-v3.7-real-fixes'
+$ScriptVersion = '2026.11.09-v3.8-run-history'
+$RunStarted    = Get-Date   # v3.8: for the run-history record
 
 # Load shared module if present (non-fatal if missing - the script has its
 # own copy of needed functions as fallback).
@@ -1790,6 +1791,18 @@ body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
 # (Run-Remediation.bat launches via Start-Process -Verb RunAs, which spawns a
 # new window that disappears the moment the script returns. This keeps it open
 # so you can read the summary.)
+# v3.8: record this run on the machine (no popup - the tech is at the
+# keyboard answering prompts; the console banner is enough).
+try {
+    if (Get-Command Complete-iDezignRun -ErrorAction SilentlyContinue) {
+        $fixedN   = 0; $skippedN = 0
+        try { $fixedN = $script:FixedList.Count; $skippedN = $script:SkippedList.Count } catch { }
+        $doneStatus = 'OK'
+        if ($skippedN -gt 0) { $doneStatus = 'Attention' }
+        Complete-iDezignRun -Tool 'Remediation' -Version $ScriptVersion -Started $RunStarted -Status $doneStatus `
+            -Summary ("{0} issue(s) fixed, {1} skipped/unresolved" -f $fixedN, $skippedN) -NoPopup
+    }
+} catch { }
 Read-Host "Press Enter to close this window"
 
 #endregion

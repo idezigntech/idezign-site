@@ -1,19 +1,20 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-10-25",
-  "toolkitVersion": "3.7",
+  "manifestUpdated": "2026-11-09",
+  "toolkitVersion": "3.8",
   "scripts": {
-    "iDezign_Common.psm1": "2026.10.25-v3.7-args-quoting",
-    "iDezign_Cleanup_Utility.ps1": "2026.10.25-v3.7-resume-fix-26h2",
-    "iDezign_Diagnostics.ps1": "2026.10.25-v3.7-honest-verdicts",
-    "iDezign_Remediation.ps1": "2026.10.25-v3.7-real-fixes",
-    "iDezign_Reset_to_OOBE.ps1": "2026.10.25-reset-v1.1-bitlocker-check",
-    "iDezign_Toolkit_GUI.ps1": "2026.10.25-gui-v3.0-update-check",
-    "iDezign_Migration_Utility.ps1": "2026.10.25-migrate-v2.2-skip-fix",
-    "iDezign_DISM.ps1": "2026.10.25-dism-v1.2-sfc-encoding",
-    "iDezign_SyncDrives.ps1": "2026.10.25-syncdrives-v1.2-enum-safety",
-    "iDezign_Duplicate.ps1": "2026.10.25-duplicate-v1.1-root-mirror-guards",
-    "iDezign_VirusScan.ps1": "2026.10.25-virusscan-v1.1-desktop-kfm"
+    "iDezign_Common.psm1": "2026.11.09-v3.8-run-history",
+    "iDezign_Cleanup_Utility.ps1": "2026.11.09-v3.8-run-history",
+    "iDezign_Diagnostics.ps1": "2026.11.09-v3.8-run-history",
+    "iDezign_Remediation.ps1": "2026.11.09-v3.8-run-history",
+    "iDezign_Reset_to_OOBE.ps1": "2026.11.09-reset-v1.2-run-history",
+    "iDezign_Toolkit_GUI.ps1": "2026.11.09-gui-v3.1-last-run",
+    "iDezign_Migration_Utility.ps1": "2026.11.09-migrate-v2.3-run-history",
+    "iDezign_DISM.ps1": "2026.11.09-dism-v1.3-run-history",
+    "iDezign_SyncDrives.ps1": "2026.11.09-syncdrives-v1.3-run-history",
+    "iDezign_Duplicate.ps1": "2026.11.09-duplicate-v1.2-run-history",
+    "iDezign_VirusScan.ps1": "2026.11.09-virusscan-v1.2-run-history",
+    "iDezign_TeamViewer.ps1": "2026.11.09-teamviewer-v1.0"
   },
   "tools": [
     {
@@ -71,13 +72,22 @@
       "order": 6
     },
     {
+      "key": "TeamViewer",
+      "displayName": "TeamViewer",
+      "subtitle": "Install iDezign remote-support Host + show ID",
+      "icon": "🖥",
+      "scriptFile": "iDezign_TeamViewer.ps1",
+      "destructive": false,
+      "order": 7
+    },
+    {
       "key": "SyncDrives",
       "displayName": "Sync Drives",
       "subtitle": "Safe two-way folder sync (trash-backed)",
       "icon": "🔄",
       "scriptFile": "iDezign_SyncDrives.ps1",
       "destructive": false,
-      "order": 7
+      "order": 8
     },
     {
       "key": "Duplicate",
@@ -86,7 +96,7 @@
       "icon": "📋",
       "scriptFile": "iDezign_Duplicate.ps1",
       "destructive": false,
-      "order": 8
+      "order": 9
     },
     {
       "key": "Reset",
@@ -95,7 +105,7 @@
       "icon": "⚠",
       "scriptFile": "iDezign_Reset_to_OOBE.ps1",
       "destructive": true,
-      "order": 9
+      "order": 10
     }
   ]
 }
