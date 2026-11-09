@@ -4,6 +4,39 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.8 - 2026-11-09 - Run history, "this computer is done" message, standalone TeamViewer tool
+  * RUN HISTORY (new, every tool): each tool now records what ran, when,
+    which toolkit version, how long, and how it ended - on the machine:
+      C:\ProgramData\iDezign\Toolkit\history.json   (last 200 runs)
+      HKLM:\SOFTWARE\iDezign\Toolkit                (LastRunTool / LastRunTime
+        / LastRunToolkitVersion / LastRunStatus, plus a subkey per tool)
+    Answers "was the toolkit ever run here, when, and with what version?":
+      - GUI (v3.1): "Last run on this PC: Cleanup - Nov 9, 2026 2:02 PM -
+        v3.8 - OK" under the script list; click it for the last 15 runs.
+      - Diagnostics report: last full Cleanup + recent runs listed in the
+        configuration section.
+      - Remotely / from a prompt:  reg query HKLM\SOFTWARE\iDezign\Toolkit /s
+    Nothing leaves the machine. History starts with v3.8.
+  * DONE MESSAGE (new): when a long-running tool finishes it raises a
+    topmost popup with a system sound - computer name, tool, toolkit
+    version, finish time, duration and a result summary - plus a large
+    console banner. Cleanup shows it when Windows Update, installs, cleanup
+    and DISM are ALL finished (before the reboot prompt; start time is
+    carried across the update reboots). Also on DISM, Virus Scan, Migrate,
+    Duplicate, Sync Drives. Quick/interactive tools (Diagnostics,
+    Remediation, TeamViewer) get the banner + history record, no popup.
+    Green = OK, yellow = needs attention, red = failed.
+  * NEW tool: iDezign_TeamViewer.ps1 (menu #7) - download + silent install
+    of the iDezign-branded TeamViewer Host from custom.teamviewer.com/idhelp
+    without running a full Cleanup. Validates the download is a real signed
+    executable (the custom link can answer with an HTML landing page - the
+    tool finds the real installer link, or opens the page and says so, and
+    never "installs" a web page), asks before reinstalling over an existing
+    copy, verifies the service, and shows the machine's TeamViewer ID.
+    Menu renumbered: Sync Drives 8, Duplicate 9, Reset to OOBE 10.
+  * Common (v3.8-run-history): Complete-iDezignRun, Write-iDezignRunRecord,
+    Show-iDezignDoneMessage, Get-iDezignRunHistory, Get-iDezignToolkitVersion.
+
 v3.7 - 2026-10-25 - Six-month refresh: data-safety bug fixes + Windows 11 26H2 adaptations
   (v3.6 was folded into this release.) Every script touched; every version
   string bumped. Highlights, worst-first:
