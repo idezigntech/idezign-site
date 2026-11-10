@@ -4,6 +4,40 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.9 - 2026-11-10 - Cleanup: power policy always-on (power button = shut down); Open-Shell no longer waits for a click
+  * Cleanup NEW Phase 1f-0 (always runs, no prompt, every machine incl.
+    laptops and servers): sleep/standby NEVER (AC + battery), hibernation
+    feature OFF, POWER BUTTON = SHUT DOWN (was sleep/standby), sleep button
+    = do nothing, Sleep + Hibernate removed from the Start power menu. The
+    button action is read back and verified. The old power prompt now only
+    covers the optional extras (HDD never spins down, display off after
+    1 hr) and is still skipped on laptops. Laptop lid-close action is NOT
+    changed.
+  * 64-BIT FIX (launcher .bat v2.9.4, GUI v3.2, Cleanup): the portable
+    .exe is a 32-bit NSIS program, so the cmd, the GUI and every tool it
+    started ran as 32-BIT PowerShell. On 64-bit Windows that means: no
+    vssadmin.exe ("The system cannot find the file specified" - System32
+    is redirected to SysWOW64), "Initialization failure" from the
+    Win32_ShadowCopy WMI class, and parts of HKLM\SOFTWARE redirected to
+    WOW6432Node. This is the likely root cause of the shadow-copy error
+    chased since v3.2.1. The .bat now always starts 64-bit PowerShell
+    (via Sysnative when it finds itself 32-bit); the GUI and Cleanup
+    relaunch themselves 64-bit as a second lock.
+  * Cleanup Phase 1e (TeamViewer): custom.teamviewer.com/idhelp was
+    answering the scripted download with its ~0.8 MB web page, which was
+    then "run" as an installer ("file or directory is corrupted", exit
+    -2) and followed by a reassuring message; a pre-existing TeamViewer
+    made it look like success. The download is now validated (PE header +
+    size); a web page is reported in red as NOT installed, and an existing
+    install is called out as untouched. Use the TeamViewer menu tool.
+  * Cleanup Phase 1g (Open-Shell): the free Ninite installer ends on a
+    "Finished." window that waits for someone to click Close, so an
+    unattended run sat there until the tech came back. The script no
+    longer waits on the Ninite process: it watches for Open-Shell's
+    StartMenu.exe to land, allows a 20-second settle, then closes the
+    Ninite window itself and continues. 10-minute cap; winget fallback
+    unchanged.
+
 v3.8 - 2026-11-09 - Run history, "this computer is done" message, standalone TeamViewer tool
   * RUN HISTORY (new, every tool): each tool now records what ran, when,
     which toolkit version, how long, and how it ended - on the machine:
