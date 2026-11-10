@@ -11,12 +11,12 @@
 #     model - required for tools that self-stage and reboot, like Cleanup)
 #   * Double-click the header to maximize/restore; drag the header to move
 #
-#  Version: 2026.11.09-gui-v3.1-last-run
+#  Version: 2026.11.10-gui-v3.2-64bit-guard
 # ============================================================================
 
 # v3.7: GUI v3.0 - real update check against the published manifest (see the
 # "Update check" block near the end of the file).
-$ScriptVersion = '2026.11.09-gui-v3.1-last-run'
+$ScriptVersion = '2026.11.10-gui-v3.2-64bit-guard'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -34,6 +34,24 @@ trap {
     Write-Diag ("  at : {0}" -f $_.InvocationInfo.PositionMessage)
     Write-Diag ("  stk: {0}" -f $_.ScriptStackTrace)
     break
+}
+
+# --- 64-bit guard (v3.2) -------------------------------------------------------
+# The portable .exe is 32-bit NSIS, so everything it launched ran as 32-bit
+# PowerShell - and every tool started from this menu inherited that. 32-bit on
+# 64-bit Windows cannot see vssadmin.exe, gets "Initialization failure" from
+# Win32_ShadowCopy, and has parts of HKLM\SOFTWARE redirected to WOW6432Node.
+# The .bat now picks 64-bit PowerShell itself; this is the second lock: if we
+# still find ourselves 32-bit, relaunch through Sysnative (the 32-bit-only alias
+# for the real System32) and exit. Tools launched from here inherit our bitness.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+    $ps64 = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    if ((Test-Path -LiteralPath $ps64) -and $PSCommandPath) {
+        try {
+            Start-Process -FilePath $ps64 -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $PSCommandPath))
+            exit 0
+        } catch { }
+    }
 }
 
 # --- Admin check -------------------------------------------------------------

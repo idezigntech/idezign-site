@@ -58,6 +58,21 @@ param(
 
 #region --- Safety checks -----------------------------------------------------
 
+# v3.9: 64-bit guard. Launched from the 32-bit portable .exe, this script ran
+# as 32-bit PowerShell: vssadmin.exe "cannot find the file" (System32 is
+# redirected to SysWOW64, which has no vssadmin), Win32_ShadowCopy returns
+# "Initialization failure", and parts of HKLM\SOFTWARE land in WOW6432Node.
+# If we are 32-bit on 64-bit Windows, relaunch through Sysnative and exit.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+    $ps64 = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    if ((Test-Path -LiteralPath $ps64) -and $PSCommandPath) {
+        Write-Host "32-bit PowerShell detected - relaunching as 64-bit..." -ForegroundColor Yellow
+        $relaunchArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"{0}"' -f $PSCommandPath))
+        if ($ResumeAfterUpdate) { $relaunchArgs += '-ResumeAfterUpdate' }
+        try { Start-Process -FilePath $ps64 -ArgumentList $relaunchArgs; exit 0 } catch { }
+    }
+}
+
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')) {
     Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
     Write-Host "Use Run-Cleanup.bat (it self-elevates) or right-click -> Run with PowerShell as Admin." -ForegroundColor Yellow
@@ -75,7 +90,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.09-v3.8-run-history'
+$ScriptVersion = '2026.11.10-v3.9-power-always-openshell-unattended'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -547,7 +562,10 @@ if (-not $ResumeAfterUpdate) {
     # laptop chassis (servers should never sleep). Laptops are auto-skipped
     # at apply time since users want battery-saving on portables.
     Write-Host ""
-    $answer = Read-Host "Configure POWER settings (HDD never, display 1hr, no sleep/hibernate)? (Y/N)"
+    # v3.9: no-sleep / no-hibernate / power-button-shuts-down are now ALWAYS
+    # applied (Phase 1f-0). This prompt only covers the optional extras.
+    Write-Host "  (Always applied: sleep off, hibernate off, power button = shut down.)" -ForegroundColor DarkGray
+    $answer = Read-Host "Also tune POWER extras (HDD never spins down, display off after 1hr)? (Y/N)"
     $doConfigurePower = $answer -match '^(y|yes)$'
 
     # --- Install Open-Shell (classic Start Menu replacement) ---
@@ -702,7 +720,8 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Malwarebytes    : " + $mwbSummary)
     Write-Host ("  Install OpenShl : " + $openShellSummary)
     Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel per-hw)'}else{'NO'})))
-    Write-Host ("  Power settings  : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr / no sleep/hibernate)'}else{'NO'})))
+    Write-Host ("  Power policy    : ALWAYS (no sleep / no hibernate / power button = shut down)")
+    Write-Host ("  Power extras    : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr)'}else{'NO'})))
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
     Write-Host ("  Dentrix excl.   : " + ($(if($doDentrixExclusions){'YES (Dentrix + SQL paths)'}else{'NO'})))
     # OneDrive nuke summary with sub-option indicators
@@ -1944,9 +1963,28 @@ if ($doInstallTV) {
         $sizeMB = [math]::Round((Get-Item $tvExe).Length / 1MB, 1)
         Write-Host "  Downloaded: $sizeMB MB" -ForegroundColor DarkGray
 
-        # Silent install. TeamViewer Custom Host installers use /S (NSIS).
-        Write-Host "  Running silent install (timeout 10 min)..." -ForegroundColor DarkGray
-        if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+        # v3.9: is this really the installer? custom.teamviewer.com/idhelp has
+        # been answering scripted downloads with its ~0.8 MB WEB PAGE, which we
+        # then tried to run as an .exe ("The file or directory is corrupted
+        # and unreadable", exit -2) - and the old code followed that with a
+        # reassuring "some builds return non-zero on success" line. A real
+        # installer starts with the PE header "MZ" and is many MB.
+        $tvValid = $false
+        try {
+            $tvFs = [System.IO.File]::OpenRead($tvExe)
+            try { $tvB0 = $tvFs.ReadByte(); $tvB1 = $tvFs.ReadByte() } finally { $tvFs.Close() }
+            $tvValid = ($tvB0 -eq 0x4D -and $tvB1 -eq 0x5A -and (Get-Item $tvExe).Length -ge 3MB)
+        } catch { }
+
+        if (-not $tvValid) {
+            Write-Host "  DOWNLOAD IS NOT THE INSTALLER - TeamViewer's link returned a web page ($sizeMB MB), not an .exe." -ForegroundColor Red
+            Write-Host "  TeamViewer was NOT installed/updated by this phase." -ForegroundColor Red
+            Write-Host "  Fix: run the 'TeamViewer' tool from the Toolkit menu (it finds the real installer link," -ForegroundColor Yellow
+            Write-Host "  or opens the page in a browser), or install from $tvUrl by hand." -ForegroundColor Yellow
+            try { Remove-Item -LiteralPath $tvExe -Force -ErrorAction SilentlyContinue } catch { }
+        } elseif (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
+            # Silent install. TeamViewer Custom Host installers use /S (NSIS).
+            Write-Host "  Running silent install (timeout 10 min)..." -ForegroundColor DarkGray
             $rc = Start-ProcessWithTimeout -FilePath $tvExe -ArgumentList @('/S') `
                     -TimeoutMinutes 10 -Label 'TeamViewer Host installer'
             if ($rc -eq 0) {
@@ -1970,8 +2008,13 @@ if ($doInstallTV) {
         # Quick verify
         Start-Sleep -Seconds 3
         $tvSvc = Get-Service -Name 'TeamViewer' -ErrorAction SilentlyContinue
-        if ($tvSvc) {
+        if ($tvSvc -and -not $tvValid) {
+            # v3.9: do not let a pre-existing install read as "this phase worked".
+            Write-Host "  Note: an EXISTING TeamViewer install is present (service $($tvSvc.Status)) - left untouched." -ForegroundColor DarkYellow
+        } elseif ($tvSvc) {
             Write-Host "  Verification: TeamViewer service state = $($tvSvc.Status)" -ForegroundColor DarkGray
+        } elseif (-not $tvValid) {
+            Write-Host "  TeamViewer is NOT installed on this machine." -ForegroundColor Red
         } else {
             Write-Host "  Warning: TeamViewer service not found after install. May need a reboot to register." -ForegroundColor DarkYellow
         }
@@ -1992,6 +2035,59 @@ if ($doInstallTV) {
 # get the workstation treatment regardless of chassis (rare edge case where
 # someone runs Server OS on a laptop for portable lab work - still want servers
 # to never sleep).
+
+# --- 1f-0. ALWAYS-ON power policy (v3.9) - not a prompt, runs every time ---
+# Per iDezign standard, on EVERY machine (desktop, laptop, server), regardless
+# of the "Configure POWER settings" answer:
+#   * Sleep / standby : never (AC and battery)
+#   * Hibernation     : feature OFF (also removes hiberfil.sys + Fast Startup)
+#   * Power button    : SHUT DOWN (was Sleep/standby by default)
+#   * Sleep button    : do nothing
+#   * Sleep + Hibernate removed from the Start power menu
+# The prompt below still controls only the optional tuning (HDD never spin
+# down, display off after 60 min), which stays skipped on laptops.
+# NOT changed: laptop lid-close action - closing the lid still does whatever
+# Windows was set to (usually sleep). Say the word if that should go too.
+Write-Host "`n[Phase 1f-0] Power policy (always): no sleep, no hibernate, power button = shut down..." -ForegroundColor Green
+try {
+    powercfg /change standby-timeout-ac 0   2>&1 | Out-Null
+    powercfg /change standby-timeout-dc 0   2>&1 | Out-Null
+    powercfg /change hibernate-timeout-ac 0 2>&1 | Out-Null
+    powercfg /change hibernate-timeout-dc 0 2>&1 | Out-Null
+    powercfg /hibernate off                 2>&1 | Out-Null
+    Write-Host "  Sleep               : NEVER (AC + battery)" -ForegroundColor DarkGray
+    Write-Host "  Hibernation         : DISABLED (hiberfil.sys removed, Fast Startup off)" -ForegroundColor DarkGray
+
+    # Button actions live in SUB_BUTTONS: 0 = do nothing, 1 = sleep,
+    # 2 = hibernate, 3 = shut down. Set for AC and DC, then re-apply the
+    # scheme so the change takes effect immediately.
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 2>&1 | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 3 2>&1 | Out-Null
+    powercfg /setacvalueindex SCHEME_CURRENT SUB_BUTTONS SBUTTONACTION 0 2>&1 | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT SUB_BUTTONS SBUTTONACTION 0 2>&1 | Out-Null
+    powercfg /setactive SCHEME_CURRENT 2>&1 | Out-Null
+    Write-Host "  Power button        : SHUT DOWN" -ForegroundColor DarkGray
+    Write-Host "  Sleep button        : do nothing" -ForegroundColor DarkGray
+
+    # Take Sleep and Hibernate off the Start > Power menu so nobody puts the
+    # machine into standby by hand either.
+    $flyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FlyoutMenuSettings'
+    if (-not (Test-Path $flyKey)) { New-Item -Path $flyKey -Force | Out-Null }
+    Set-ItemProperty -Path $flyKey -Name 'ShowSleepOption'     -Value 0 -Type DWord
+    Set-ItemProperty -Path $flyKey -Name 'ShowHibernateOption' -Value 0 -Type DWord
+    Write-Host "  Power menu          : Sleep + Hibernate entries hidden" -ForegroundColor DarkGray
+
+    # Verify the button action really stuck (GPO-managed schemes can refuse).
+    $pbLine = (powercfg /q SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 2>&1 | Select-String 'Current AC Power Setting Index' | Select-Object -First 1)
+    if ($pbLine -and ([string]$pbLine) -match '0x0*3\s*$') {
+        Write-Host "  Verified            : power button action = 3 (shut down)" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: could not confirm the power button action - check Control Panel > Power Options > Choose what the power buttons do." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "  ERROR applying power policy: $($_.Exception.Message)" -ForegroundColor Red
+}
+
 if ($doConfigurePower) {
     Write-Host "`n[Phase 1f] Configuring power settings..." -ForegroundColor Green
 
@@ -2082,29 +2178,48 @@ if ($doInstallOpenShell) {
         'C:\Program Files (x86)\Open-Shell'
     )
 
-    $niniteOk = Get-RemoteFile -Url $niniteUrl -OutFile $niniteExe -DisplayName 'Ninite Open-Shell installer'
+    # v3.9: already installed? Then skip the installer entirely (the watcher
+    # below keys on StartMenu.exe appearing, so a pre-existing copy would make
+    # it close Ninite mid-update). Defaults are still (re)applied further down.
+    $osAlready = $osPaths | ForEach-Object { Join-Path $_ 'StartMenu.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    $niniteOk = $false
+    if ($osAlready) {
+        Write-Host "  Open-Shell is already installed ($osAlready) - skipping the installer." -ForegroundColor DarkGray
+    } else {
+        $niniteOk = Get-RemoteFile -Url $niniteUrl -OutFile $niniteExe -DisplayName 'Ninite Open-Shell installer'
+    }
     if ($niniteOk) {
         try {
             # Ninite free installer: no command-line args needed. Just runs and
             # installs silently with a progress GUI. -Wait so we know when it's
             # done. WindowStyle Hidden suppresses the small Ninite window.
+            # v3.9: do NOT wait on the Ninite process. The free Ninite installer
+            # ends on a "Finished." window that stays up until someone clicks
+            # Close - so an unattended run sat there until the tech came back.
+            # Instead: launch it, watch for Open-Shell's StartMenu.exe to land
+            # in the install directory, give it a short settle, then close the
+            # Ninite window ourselves and move on. Hard cap 10 minutes.
             $rc = $null
-            if (Get-Command Start-ProcessWithTimeout -ErrorAction SilentlyContinue) {
-                $rc = Start-ProcessWithTimeout `
-                        -FilePath $niniteExe `
-                        -ArgumentList @() `
-                        -TimeoutMinutes 10 -Label 'Ninite Open-Shell installer'
-            } else {
-                $p = Start-Process -FilePath $niniteExe -Wait -PassThru
-                $rc = $p.ExitCode
+            $niniteProc = Start-Process -FilePath $niniteExe -PassThru
+            $niniteStart = Get-Date
+            $landedAt = $null
+            while ($true) {
+                Start-Sleep -Seconds 3
+                if ($niniteProc.HasExited) { $rc = $niniteProc.ExitCode; break }   # someone clicked Close, or it failed
+                $smExe = $osPaths | ForEach-Object { Join-Path $_ 'StartMenu.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+                if ($smExe -and -not $landedAt) { $landedAt = Get-Date }
+                if ($landedAt -and ((Get-Date) - $landedAt).TotalSeconds -ge 20) { $rc = 0; break }   # installed + settled
+                if (((Get-Date) - $niniteStart).TotalMinutes -ge 10) { $rc = -1; break }
             }
+            # Close the leftover Ninite window(s): the launcher and the worker it
+            # unpacks to %TEMP% are both named Ninite*.
+            try { if (-not $niniteProc.HasExited) { Stop-Process -Id $niniteProc.Id -Force -ErrorAction SilentlyContinue } } catch { }
+            try { Get-Process -Name 'Ninite*' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch { }
 
-            # v3.7: Start-ProcessWithTimeout returns -1 on timeout (never the
-            # string 'TIMEOUT' - that branch could never fire).
             if ($rc -eq -1) {
-                Write-Host "  Ninite installer TIMED OUT (>10 min). It may still finish in background." -ForegroundColor Red
+                Write-Host "  Ninite installer TIMED OUT (>10 min) - closed it; winget fallback will try next." -ForegroundColor Red
             } elseif ($rc -eq 0) {
-                Write-Host "  Open-Shell installed successfully." -ForegroundColor DarkGray
+                Write-Host "  Open-Shell installed (Ninite 'Finished' window closed automatically)." -ForegroundColor DarkGray
             } else {
                 Write-Host "  Ninite installer returned exit code $rc." -ForegroundColor Yellow
                 Write-Host "  Verify via: Get-Item 'C:\Program Files\Open-Shell'" -ForegroundColor DarkGray

@@ -41,6 +41,16 @@ goto :end
 set "SCRIPT_DIR=%~dp0"
 set "GUI_SCRIPT=%SCRIPT_DIR%iDezign_Toolkit_GUI.ps1"
 
+:: v2.9.4-bat (toolkit v3.9): ALWAYS use 64-bit PowerShell. The portable .exe
+:: is a 32-bit NSIS program, so the cmd it starts - and every PowerShell after
+:: it - was 32-bit. A 32-bit process on 64-bit Windows cannot see vssadmin.exe
+:: (System32 is redirected to SysWOW64), gets "Initialization failure" from the
+:: shadow-copy WMI class, and has parts of HKLM\SOFTWARE redirected to
+:: WOW6432Node. "Sysnative" exists ONLY for 32-bit processes and points at the
+:: real 64-bit System32 - so if it is there, we are 32-bit and must use it.
+set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "PS_EXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+
 if not exist "%GUI_SCRIPT%" goto :missing
 
 :: Already elevated?  net session returns 0 only when running as admin.
@@ -48,14 +58,14 @@ net session >nul 2>&1
 if %errorlevel% neq 0 goto :elevate
 
 :run_elevated
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%GUI_SCRIPT%"
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%GUI_SCRIPT%"
 goto :end
 
 :elevate
 :: Relaunch elevated, minimized (NOT hidden - see header). The GUI hides
 :: its own console once loaded, so the minimized window is a taskbar blip.
 :: v2.9.3-bat: path comes from $env:GUI_SCRIPT (apostrophe-safe, see header).
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -Verb RunAs -WindowStyle Minimized -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('\"{0}\"' -f $env:GUI_SCRIPT))"
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -Command "Start-Process powershell.exe -Verb RunAs -WindowStyle Minimized -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('\"{0}\"' -f $env:GUI_SCRIPT))"
 goto :end
 
 :missing
