@@ -90,7 +90,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.10-v3.10-teamviewer-signed-link'
+$ScriptVersion = '2026.11.10-v3.9-teamviewer-signed-link'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 

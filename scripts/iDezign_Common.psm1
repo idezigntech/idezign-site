@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.11.10-v3.10-teamviewer-link'
+$script:ModuleVersion = '2026.11.10-v3.9-teamviewer-link'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
