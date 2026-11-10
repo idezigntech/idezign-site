@@ -1,10 +1,10 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
-  "manifestUpdated": "2026-11-09",
-  "toolkitVersion": "3.9",
+  "manifestUpdated": "2026-11-10",
+  "toolkitVersion": "3.10",
   "scripts": {
-    "iDezign_Common.psm1": "2026.11.09-v3.8-run-history",
-    "iDezign_Cleanup_Utility.ps1": "2026.11.10-v3.9-power-always-openshell-unattended",
+    "iDezign_Common.psm1": "2026.11.10-v3.10-teamviewer-link",
+    "iDezign_Cleanup_Utility.ps1": "2026.11.10-v3.10-teamviewer-signed-link",
     "iDezign_Diagnostics.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Remediation.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Reset_to_OOBE.ps1": "2026.11.09-reset-v1.2-run-history",
@@ -14,7 +14,7 @@
     "iDezign_SyncDrives.ps1": "2026.11.09-syncdrives-v1.3-run-history",
     "iDezign_Duplicate.ps1": "2026.11.09-duplicate-v1.2-run-history",
     "iDezign_VirusScan.ps1": "2026.11.09-virusscan-v1.2-run-history",
-    "iDezign_TeamViewer.ps1": "2026.11.09-teamviewer-v1.0"
+    "iDezign_TeamViewer.ps1": "2026.11.10-teamviewer-v1.1-signed-link"
   },
   "tools": [
     {

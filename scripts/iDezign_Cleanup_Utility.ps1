@@ -90,7 +90,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.10-v3.9-power-always-openshell-unattended'
+$ScriptVersion = '2026.11.10-v3.10-teamviewer-signed-link'
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -1929,9 +1929,29 @@ if ($doInstallTV) {
     Write-Host "  Source: $tvUrl" -ForegroundColor DarkGray
     Write-Host "  Local : $tvExe" -ForegroundColor DarkGray
 
-    # Use job timeout helper if available - 10 min for download.
     $downloaded = $false
-    if (Get-Command Invoke-WithJobTimeout -ErrorAction SilentlyContinue) {
+
+    # v3.10: the real download. custom.teamviewer.com/idhelp is a web app, not
+    # a file link - the page's script trades a customization blob for a
+    # short-lived signed installer link. The shared module performs the same
+    # exchange and validates the result (see Get-iDezignTeamViewerInstaller).
+    if (Get-Command Get-iDezignTeamViewerInstaller -ErrorAction SilentlyContinue) {
+        Write-Host "  Asking TeamViewer for the signed installer link..." -ForegroundColor DarkGray
+        $tvDl = Get-iDezignTeamViewerInstaller -PageUrl $tvUrl -OutDir $StagingDir
+        if ($tvDl.Path) {
+            $tvExe = $tvDl.Path
+            $downloaded = $true
+            Write-Host "  Got the installer: $(Split-Path $tvExe -Leaf)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Link method failed at '$($tvDl.Step)': $($tvDl.Error)" -ForegroundColor DarkYellow
+            Write-Host "  Falling back to the direct download..." -ForegroundColor DarkGray
+        }
+    }
+
+    # Use job timeout helper if available - 10 min for download.
+    if ($downloaded) {
+        # already have the validated installer from the signed link
+    } elseif (Get-Command Invoke-WithJobTimeout -ErrorAction SilentlyContinue) {
         $jobResult = Invoke-WithJobTimeout -TimeoutMinutes 10 -Label 'TeamViewer download' `
                                             -ArgumentList @($tvUrl, $tvExe) -ScriptBlock {
             param($u, $o)
@@ -2078,11 +2098,24 @@ try {
     Write-Host "  Power menu          : Sleep + Hibernate entries hidden" -ForegroundColor DarkGray
 
     # Verify the button action really stuck (GPO-managed schemes can refuse).
-    $pbLine = (powercfg /q SCHEME_CURRENT SUB_BUTTONS PBUTTONACTION 2>&1 | Select-String 'Current AC Power Setting Index' | Select-Object -First 1)
-    if ($pbLine -and ([string]$pbLine) -match '0x0*3\s*$') {
+    # v3.10: query by GUID (the PBUTTONACTION alias is not accepted by
+    # 'powercfg /q' on every build - that made the v3.9 check warn even when
+    # the setting had applied) and report the value actually read.
+    $subButtons = '4f971e89-eebd-4455-a8de-9e59040e7347'
+    $pButton    = '7648efa3-dd9c-4e3e-b566-50f929386280'
+    # Belt and suspenders: set by GUID too, in case the aliases were refused.
+    powercfg /setacvalueindex SCHEME_CURRENT $subButtons $pButton 3 2>&1 | Out-Null
+    powercfg /setdcvalueindex SCHEME_CURRENT $subButtons $pButton 3 2>&1 | Out-Null
+    powercfg /setactive SCHEME_CURRENT 2>&1 | Out-Null
+    $pbText  = (powercfg /q SCHEME_CURRENT $subButtons $pButton 2>&1 | Out-String)
+    $pbValue = $null
+    if ($pbText -match 'Current AC Power Setting Index:\s*0x([0-9A-Fa-f]+)') { $pbValue = [Convert]::ToInt32($Matches[1], 16) }
+    if ($pbValue -eq 3) {
         Write-Host "  Verified            : power button action = 3 (shut down)" -ForegroundColor Green
+    } elseif ($null -ne $pbValue) {
+        Write-Host "  WARNING: power button action reads back as $pbValue (wanted 3 = shut down) - a policy may be overriding it." -ForegroundColor Yellow
     } else {
-        Write-Host "  WARNING: could not confirm the power button action - check Control Panel > Power Options > Choose what the power buttons do." -ForegroundColor Yellow
+        Write-Host "  WARNING: could not read the power button action back - check Control Panel > Power Options > Choose what the power buttons do." -ForegroundColor Yellow
     }
 } catch {
     Write-Host "  ERROR applying power policy: $($_.Exception.Message)" -ForegroundColor Red

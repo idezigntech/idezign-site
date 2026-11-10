@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.11.09-v3.8-run-history'
+$script:ModuleVersion = '2026.11.10-v3.10-teamviewer-link'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -1656,6 +1656,111 @@ function Get-iDezignConsoleUserSid {
 }
 #endregion
 
+#region --- Get-iDezignTeamViewerInstaller (v3.10) ---------------------------
+<#
+.SYNOPSIS
+    Download the iDezign-branded TeamViewer Host installer the way the
+    browser does - returns the path to a validated .exe, or an error.
+
+.DESCRIPTION
+    custom.teamviewer.com/<alias> is NOT a file link. It is a web app:
+      1. The page embeds a JSON blob  "customizationData":{...}
+         (alias, customization id, version, source/target file names).
+      2. Its script calls  /custom-download-url?generationParams=<that JSON>
+         and gets back  { isSuccess: true, data: { url: <signed link> } }.
+      3. The browser then downloads the signed link (customdesignservice.
+         teamviewer.com/download/windows/v15/<id>/TeamViewer_Host_Setup_x64.exe
+         + short-lived signature parameters).
+    Downloading the page URL directly just saves ~0.8 MB of HTML - which is
+    what Cleanup Phase 1e did until v3.9 caught it. This function performs
+    the same three steps and validates the result (PE "MZ" header, >= 3 MB).
+
+.OUTPUTS
+    Hashtable: Path (string or $null), Error (string or $null), Step (where
+    it stopped), SizeMB.
+#>
+function Get-iDezignTeamViewerInstaller {
+    [CmdletBinding()]
+    param(
+        [string] $PageUrl = 'https://custom.teamviewer.com/idhelp',
+        [Parameter(Mandatory)] [string] $OutDir
+    )
+    $result = @{ Path = $null; Error = $null; Step = 'start'; SizeMB = 0 }
+    # The page picks x64 vs x86 from the browser's user agent.
+    $ua = if ([Environment]::Is64BitOperatingSystem) {
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+    } else {
+        'Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+    }
+    $toText = {
+        param($c)
+        if ($c -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($c) }
+        return [string]$c
+    }
+    try {
+        $oldProgress = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -Path $OutDir -ItemType Directory -Force | Out-Null }
+
+        # 1) the page, and the customizationData object embedded in it
+        $result.Step = 'fetch page'
+        $page = Invoke-WebRequest -Uri $PageUrl -UseBasicParsing -UserAgent $ua -TimeoutSec 60 -ErrorAction Stop
+        $html = & $toText $page.Content
+        $marker = '"customizationData":'
+        $i = $html.IndexOf($marker)
+        if ($i -lt 0) { throw 'customizationData not found in the page (TeamViewer changed the page layout?)' }
+        $j = $i + $marker.Length
+        $depth = 0; $end = -1
+        for ($k = $j; $k -lt $html.Length -and $k -lt ($j + 20000); $k++) {
+            $ch = $html[$k]
+            if ($ch -eq '{') { $depth++ }
+            elseif ($ch -eq '}') { $depth--; if ($depth -eq 0) { $end = $k; break } }
+        }
+        if ($end -lt 0) { throw 'could not read the customizationData object' }
+        $cdRaw = $html.Substring($j, $end - $j + 1)
+        $cd = $cdRaw | ConvertFrom-Json -ErrorAction Stop
+
+        # 2) ask TeamViewer for the signed download link
+        $result.Step = 'request download link'
+        $authority = ([Uri]$PageUrl).GetLeftPart([UriPartial]::Authority)
+        $linkUrl = $authority + '/custom-download-url?generationParams=' + [Uri]::EscapeDataString($cdRaw)
+        $linkResp = Invoke-WebRequest -Uri $linkUrl -UseBasicParsing -UserAgent $ua -TimeoutSec 60 -ErrorAction Stop
+        $link = (& $toText $linkResp.Content) | ConvertFrom-Json -ErrorAction Stop
+        if (-not $link.isSuccess -or -not $link.data -or -not $link.data.url) { throw 'TeamViewer did not return a download link' }
+        $dlUrl = [string]$link.data.url
+        if ($dlUrl -notmatch '^https://[A-Za-z0-9.\-]*teamviewer\.com/') { throw 'download link is not on teamviewer.com - refusing it' }
+
+        # 3) download the installer and make sure it IS an installer
+        $result.Step = 'download installer'
+        $name = 'TeamViewer_Host_Setup_x64.exe'
+        try { if ($cd.downloadConfig -and $cd.downloadConfig.targetFile) { $name = [string]$cd.downloadConfig.targetFile } } catch { }
+        $name = ($name -replace '[\\/:*?"<>|]', '_')
+        if ($name -notmatch '\.exe$') { $name += '.exe' }
+        $out = Join-Path $OutDir $name
+        if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
+        Invoke-WebRequest -Uri $dlUrl -OutFile $out -UseBasicParsing -UserAgent $ua -TimeoutSec 900 -ErrorAction Stop
+
+        $result.Step = 'validate'
+        $fi = Get-Item -LiteralPath $out -ErrorAction Stop
+        $fs = [System.IO.File]::OpenRead($out)
+        try { $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte() } finally { $fs.Close() }
+        if ($b0 -ne 0x4D -or $b1 -ne 0x5A -or $fi.Length -lt 3MB) {
+            Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+            throw ("downloaded file is not a Windows installer ({0:N1} MB)" -f ($fi.Length / 1MB))
+        }
+        $result.Path   = $out
+        $result.SizeMB = [math]::Round($fi.Length / 1MB, 1)
+        $result.Step   = 'done'
+    } catch {
+        $result.Error = $_.Exception.Message
+    } finally {
+        $ProgressPreference = $oldProgress
+    }
+    return $result
+}
+#endregion
+
 #region --- Run history + completion message (v3.8) -------------------------
 <#
 .SYNOPSIS
@@ -1850,6 +1955,7 @@ function Complete-iDezignRun {
 #endregion
 
 Export-ModuleMember -Function `
+    Get-iDezignTeamViewerInstaller, `
     Get-iDezignToolkitVersion, `
     Get-iDezignRunHistory, `
     Write-iDezignRunRecord, `

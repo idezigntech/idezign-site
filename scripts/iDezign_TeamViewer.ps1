@@ -19,7 +19,7 @@
 #  Run as Administrator. No reboot.
 # ============================================================================
 
-$ScriptVersion = '2026.11.09-teamviewer-v1.0'
+$ScriptVersion = '2026.11.10-teamviewer-v1.1-signed-link'
 $RunStarted    = Get-Date
 
 #region --- Safety + module load -------------------------------------------
@@ -196,7 +196,25 @@ Write-Host "  Source: $TvUrl" -ForegroundColor DarkGray
 Write-Host "  Local : $TvExe" -ForegroundColor DarkGray
 
 $gotExe = $false
-if (Get-TvInstaller -Url $TvUrl -OutFile $TvExe) {
+
+# v1.1: the real way in. custom.teamviewer.com/idhelp is a web app, not a file
+# link: the page hands out a customization blob, its script trades that for a
+# short-lived signed link, and THAT is the installer. The shared module does
+# the same three steps (see Get-iDezignTeamViewerInstaller in Common).
+if (Get-Command Get-iDezignTeamViewerInstaller -ErrorAction SilentlyContinue) {
+    Write-Host "  Asking TeamViewer for the signed installer link..." -ForegroundColor DarkGray
+    $tvDl = Get-iDezignTeamViewerInstaller -PageUrl $TvUrl -OutDir $WorkDir
+    if ($tvDl.Path) {
+        $TvExe  = $tvDl.Path
+        $gotExe = $true
+        Write-Host "  Got the installer: $(Split-Path $TvExe -Leaf)" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Link method failed at '$($tvDl.Step)': $($tvDl.Error)" -ForegroundColor DarkYellow
+        Write-Host "  Falling back to the direct download..." -ForegroundColor DarkGray
+    }
+}
+
+if (-not $gotExe -and (Get-TvInstaller -Url $TvUrl -OutFile $TvExe)) {
     if (Test-IsExecutable -Path $TvExe) {
         $gotExe = $true
     } else {
