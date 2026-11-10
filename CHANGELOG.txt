@@ -4,6 +4,23 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.10 - 2026-11-10 - TeamViewer actually downloads + installs (signed-link exchange); power-button check fixed
+  * TeamViewer (Cleanup Phase 1e + the TeamViewer menu tool v1.1): the
+    branded link custom.teamviewer.com/idhelp is a WEB APP, not a file. In
+    a browser its script (1) reads a "customizationData" blob embedded in
+    the page, (2) calls /custom-download-url?generationParams=<blob> and
+    gets back a short-lived signed link, (3) downloads that link
+    (customdesignservice.teamviewer.com/.../TeamViewer_Host_Setup_x64.exe).
+    A scripted download of the page URL only ever saved 0.8 MB of HTML.
+    New shared function Get-iDezignTeamViewerInstaller (Common) performs
+    the same three steps, refuses links that are not on teamviewer.com,
+    and validates the file (PE header, size). Both callers then install
+    silently (/S) as before. Old direct download kept as fallback.
+  * Cleanup Phase 1f-0: the power-button verification queried by alias,
+    which 'powercfg /q' does not accept on every build, so it warned even
+    when the setting applied. Now sets AND reads back by GUID and prints
+    the value actually found.
+
 v3.9 - 2026-11-10 - Cleanup: power policy always-on (power button = shut down); Open-Shell no longer waits for a click
   * Cleanup NEW Phase 1f-0 (always runs, no prompt, every machine incl.
     laptops and servers): sleep/standby NEVER (AC + battery), hibernation
