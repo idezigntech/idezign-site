@@ -4,6 +4,30 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.9 (fourth build) - 2026-11-11 - Cleanup: unattended mode signs in as REPAIR (no user password)
+  * Unattended mode no longer asks for the end user's password. Answering
+    Y sets up the REPAIR account right there in preflight (create or
+    reset, enabled, never expires, local Administrators), verifies Windows
+    accepts the sign-in, and arms auto-logon for REPAIR. Phase 3 still
+    re-asserts the account later as before.
+  * The resume task is registered for REPAIR in this mode, so the run
+    continues in the REPAIR session after each reboot. The first-sign-in
+    "Choose privacy settings" page is switched off by policy so it cannot
+    cover a brand-new REPAIR profile.
+  * Per-user steps are applied to the REAL user too (new step 2c-5): when
+    the run is in the REPAIR session, the starting user's registry hive is
+    loaded and the notification/nag settings, Open-Shell Win7 menu and the
+    Chrome bookmark are applied to their profile as well. (Chrome bookmark
+    is skipped if that account has never opened Chrome.)
+  * Standard build, fewer questions: Chrome, Claude Desktop, Malwarebytes
+    download (never installed), TeamViewer Host, power extras, Open-Shell,
+    vendor driver tools, network Private + sharing/firewall rules, and
+    Defender exclusions are now ALWAYS done. Nag screens / 26H2 consumer
+    policies are ALWAYS turned off and no longer depend on the OneDrive
+    answer. Still asked: unattended, Nuke OneDrive, Nuke Teams (now its
+    own question), rename computer, rename user.
+  * Not available on Domain Controllers (no local accounts).
+
 v3.9 (third build) - 2026-11-11 - Cleanup: optional fully UNATTENDED mode (auto sign-in + auto reboot)
   * New first question "Run fully UNATTENDED?". If yes: asks for the
     account password (hidden), verifies it against Windows, and arms
