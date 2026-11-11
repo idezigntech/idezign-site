@@ -4,6 +4,23 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v3.9 (third build) - 2026-11-11 - Cleanup: optional fully UNATTENDED mode (auto sign-in + auto reboot)
+  * New first question "Run fully UNATTENDED?". If yes: asks for the
+    account password (hidden), verifies it against Windows, and arms
+    Windows auto-logon so the run survives its update reboots with nobody
+    at the keyboard. Reboots in the update loop and the pending-operations
+    step no longer ask in this mode.
+  * Password is stored only as an LSA secret (the encrypted store the
+    Sysinternals Autologon tool uses) - never in state.json, the
+    transcript, or the plaintext Winlogon value. Auto sign-ins are capped
+    at 8 (AutoLogonCount). Auto-logon is switched off and the secret
+    erased when the update loop finishes (before renames), again at
+    wrap-up, and at the start of the next fresh run if one was left armed.
+  * Limits: the PC is open (no password) while the run is in progress;
+    Microsoft-account / PIN-only sign-ins and BitLocker startup PINs can
+    still stop at a prompt; the final "reboot now?" question after the
+    done popup still waits for a person.
+
 v3.9 (second build, same day) - 2026-11-10 - TeamViewer actually downloads + installs (signed-link exchange); power-button check fixed
   (Briefly published as "3.10"; renumbered back to 3.9 because 3.10 reads
   like 3.1. The 3.9 release files were replaced with this build.)
