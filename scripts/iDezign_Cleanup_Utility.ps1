@@ -90,7 +90,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.11-v3.9.3-standard-build-real-user'
+$ScriptVersion = '2026.11.11-v3.9.4-no-proceed-prompt'
 
 #region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
 # Lets a Cleanup run survive its Windows Update reboots with nobody at the
@@ -664,11 +664,9 @@ if (-not $ResumeAfterUpdate) {
     Write-Host "============================================================" -ForegroundColor Cyan
     Write-Host ""
 
-    $confirm = Read-Host "Proceed? (Y/N)"
-    if ($confirm -notmatch '^(y|yes)$') {
-        Write-Host "Aborted." -ForegroundColor Yellow
-        exit 0
-    }
+    # v3.9.4: the "Proceed? (Y/N)" question is gone - launching Cleanup IS the
+    # decision. To back out, close this window at the first question below
+    # (answering Y to UNATTENDED sets up REPAIR + auto sign-in right away).
 
     # --- Unattended mode (v3.9.1) ---
     # A previous run that crashed may have left auto-logon armed - clear it.
