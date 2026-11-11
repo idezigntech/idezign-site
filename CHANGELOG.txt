@@ -26,6 +26,8 @@ v3.9 (fourth build) - 2026-11-11 - Cleanup: unattended mode signs in as REPAIR (
     policies are ALWAYS turned off and no longer depend on the OneDrive
     answer. Still asked: unattended, Nuke OneDrive, Nuke Teams (now its
     own question), rename computer, rename user.
+  * The opening "Proceed? (Y/N)" question is removed - Cleanup goes
+    straight to the questions above.
   * Not available on Domain Controllers (no local accounts).
 
 v3.9 (third build) - 2026-11-11 - Cleanup: optional fully UNATTENDED mode (auto sign-in + auto reboot)
