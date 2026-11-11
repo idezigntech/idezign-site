@@ -90,7 +90,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.11-v3.9.1-unattended-autologon'
+$ScriptVersion = '2026.11.11-v3.9.3-standard-build-real-user'
 
 #region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
 # Lets a Cleanup run survive its Windows Update reboots with nobody at the
@@ -108,6 +108,42 @@ $ScriptVersion = '2026.11.11-v3.9.1-unattended-autologon'
 $IdzWinlogonKey   = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 $IdzToolkitKey    = 'HKLM:\SOFTWARE\iDezign\Toolkit'
 $IdzAutoLogonCap  = 8
+# v3.9.2: unattended mode signs in as the REPAIR service account (not the
+# end user), so no customer password is ever typed or stored. One definition
+# of the account for both the preflight setup below and Phase 3.
+$IdzRepairName    = 'REPAIR'
+$IdzRepairPwd     = 'achtung'
+
+function Initialize-IdzRepairAccount {
+    # Create / reset REPAIR and make sure it is an enabled local administrator.
+    # Uses 'net user' + WMI only (the LocalAccounts cmdlets do not load
+    # reliably on Win 11 25H2). Returns $true when the account is ready.
+    try {
+        $null = & net user $IdzRepairName 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $null = & net user $IdzRepairName $IdzRepairPwd /active:yes 2>&1
+        } else {
+            $null = & net user $IdzRepairName $IdzRepairPwd /add /fullname:"$IdzRepairName" /comment:"Service/repair admin account" 2>&1
+        }
+        if ($LASTEXITCODE -ne 0) { return $false }
+        $null = & net user $IdzRepairName /expires:never 2>&1
+        try {
+            $u = Get-CimInstance Win32_UserAccount -Filter "Name='$IdzRepairName' AND LocalAccount=TRUE" -ErrorAction Stop
+            if ($u) { Set-CimInstance -InputObject $u -Property @{ PasswordExpires = $false } -ErrorAction SilentlyContinue }
+        } catch { }
+        $grp = 'Administrators'
+        try {
+            $g = Get-CimInstance Win32_Group -Filter "SID='S-1-5-32-544' AND LocalAccount=TRUE" -ErrorAction Stop
+            if ($g -and $g.Name) { $grp = $g.Name }
+        } catch { }
+        $members = & net localgroup $grp 2>&1
+        if (-not ($members | Select-String -Pattern ("^\s*" + [regex]::Escape($IdzRepairName) + "\s*$") -Quiet)) {
+            $null = & net localgroup $grp $IdzRepairName /add 2>&1
+            if ($LASTEXITCODE -ne 0) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
 
 function Initialize-IdzLsa {
     if ('IdzLsa' -as [type]) { return $true }
@@ -639,55 +675,62 @@ if (-not $ResumeAfterUpdate) {
     Disable-IdzAutoLogon -Quiet
     $unattended = $false
     Write-Host ""
-    Write-Host "UNATTENDED mode: Windows signs '$CurrentUser' in by itself after each update" -ForegroundColor Cyan
-    Write-Host "reboot (max $IdzAutoLogonCap times) and reboots without asking, so the run finishes" -ForegroundColor Cyan
-    Write-Host "with nobody at the keyboard. The machine is OPEN (no password) while it runs." -ForegroundColor Yellow
+    Write-Host "UNATTENDED mode: the $IdzRepairName account is set up NOW, and Windows signs in as" -ForegroundColor Cyan
+    Write-Host "$IdzRepairName by itself after each update reboot (max $IdzAutoLogonCap times) and reboots without" -ForegroundColor Cyan
+    Write-Host "asking, so the run finishes with nobody at the keyboard. No user password needed." -ForegroundColor Cyan
+    Write-Host "The machine is OPEN (no password) while it runs." -ForegroundColor Yellow
     $answer = Read-Host "Run fully UNATTENDED? (Y/N)"
-    if ($answer -match '^(y|yes)$') {
-        try {
-            $plVal = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device' -Name DevicePasswordLessBuildVersion -ErrorAction Stop).DevicePasswordLessBuildVersion
-            if ($plVal -eq 2) {
-                Write-Host "  Note: 'passwordless sign-in' is ON for this PC (Hello/PIN only). Auto-logon may be" -ForegroundColor DarkYellow
-                Write-Host "  ignored by Windows - if the first reboot stops at the sign-in screen, that is why." -ForegroundColor DarkYellow
+    $isDcNow = $false
+    try { $isDcNow = ((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).DomainRole -ge 4) } catch { }
+    if ($answer -match '^(y|yes)$' -and $isDcNow) {
+        Write-Host "  This is a Domain Controller (no local accounts) - unattended mode is not available." -ForegroundColor Yellow
+        Write-Host "  Continuing in normal (attended) mode." -ForegroundColor DarkGray
+    } elseif ($answer -match '^(y|yes)$') {
+        # v3.9.2: sign in as REPAIR instead of asking for the user's password.
+        # The account has to exist BEFORE the first reboot, so it is created /
+        # reset here in preflight (Phase 3 re-asserts it later as always).
+        Write-Host "  Setting up the $IdzRepairName account now (needed before the first reboot)..." -ForegroundColor DarkGray
+        $logonRc = -1
+        if (Initialize-IdzRepairAccount) {
+            if (Initialize-IdzLsa) { $logonRc = [IdzLsa]::TestLogon($IdzRepairName, $env:COMPUTERNAME, $IdzRepairPwd) }
+        } else {
+            Write-Host "  Could not create/reset the $IdzRepairName account." -ForegroundColor Red
+        }
+        if ($logonRc -eq 0) {
+            if (Enable-IdzAutoLogon -User $IdzRepairName -Domain $env:COMPUTERNAME -Password $IdzRepairPwd) {
+                $unattended = $true
+                # A first sign-in on a new profile can stop on the full-screen
+                # "Choose privacy settings" page - switch that page off.
+                try {
+                    $oobeKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OOBE'
+                    if (-not (Test-Path $oobeKey)) { New-Item -Path $oobeKey -Force | Out-Null }
+                    Set-ItemProperty -Path $oobeKey -Name 'DisablePrivacyExperience' -Value 1 -Type DWord
+                } catch { }
+                Write-Host "  $IdzRepairName is ready and verified. Auto sign-in armed for $IdzAutoLogonCap sign-ins; removed when the update loop finishes." -ForegroundColor Green
+                Write-Host "  After the first reboot the run continues in the $IdzRepairName session." -ForegroundColor DarkGray
             }
-        } catch { }
-        for ($try = 1; $try -le 3 -and -not $unattended; $try++) {
-            $sec = Read-Host "  Password for '$env:USERDOMAIN\$CurrentUser' (hidden; Enter alone = cancel unattended)" -AsSecureString
-            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-            $plainPw = $null
-            try { $plainPw = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-            if ([string]::IsNullOrEmpty($plainPw)) { Write-Host "  Unattended mode cancelled." -ForegroundColor DarkGray; break }
-            $logonRc = -1
-            if (Initialize-IdzLsa) { $logonRc = [IdzLsa]::TestLogon($CurrentUser, $env:USERDOMAIN, $plainPw) }
-            if ($logonRc -eq 0) {
-                if (Enable-IdzAutoLogon -User $CurrentUser -Domain $env:USERDOMAIN -Password $plainPw) {
-                    $unattended = $true
-                    Write-Host "  Password verified. Auto-logon armed for $IdzAutoLogonCap sign-ins; it is removed when the update loop finishes." -ForegroundColor Green
-                }
-            } elseif ($logonRc -eq 1326) {
-                Write-Host "  That password was not accepted by Windows (attempt $try of 3)." -ForegroundColor Yellow
-            } else {
-                Write-Host "  Windows could not verify the password (error $logonRc) - unattended mode needs a" -ForegroundColor Yellow
-                Write-Host "  local or domain account password; Microsoft-account / PIN-only sign-ins may not work." -ForegroundColor Yellow
-            }
-            $plainPw = $null
+        } elseif ($logonRc -gt 0) {
+            Write-Host "  Windows would not sign $IdzRepairName in (error $logonRc) - a policy may be blocking it." -ForegroundColor Yellow
         }
         if (-not $unattended) { Write-Host "  Continuing in normal (attended) mode." -ForegroundColor DarkGray }
     }
 
     # --- Install Chrome ---
+    # v3.9.3: the standard iDezign build no longer asks about these - they are
+    # always YES. Only OneDrive, Teams and the two renames are still questions.
     Write-Host ""
-    $answer = Read-Host "Install Google Chrome? (Y/N)"
-    $doInstallChrome    = $answer -match '^(y|yes)$'
+    Write-Host "Standard build (always done, no questions):" -ForegroundColor Cyan
+    Write-Host "  Chrome (+ default browser) | Claude Desktop | Malwarebytes download (not installed)" -ForegroundColor DarkGray
+    Write-Host "  TeamViewer Host | power extras | Open-Shell (Win7 menu) | vendor driver tools" -ForegroundColor DarkGray
+    Write-Host "  network Private + sharing/firewall rules | Defender exclusions (Dentrix/SQL) | nag screens off" -ForegroundColor DarkGray
+    $doInstallChrome    = $true
     # v3.5: the "also set default?" sub-question is gone - installing Chrome
     # ALWAYS sets it as default browser for NEW user profiles (DISM XML).
     # Nobody ever answered N; one less prompt.
     $doSetChromeDefault = $doInstallChrome
 
     # --- Install Claude Desktop ---
-    Write-Host ""
-    $answer = Read-Host "Install Claude Desktop? (Y/N)"
-    $doInstallClaude = $answer -match '^(y|yes)$'
+    $doInstallClaude = $true
 
     # --- Download Malwarebytes to Downloads folder (+ optional install) ---
     # The installer is always staged to Downloads so the tech can run it
@@ -696,23 +739,16 @@ if (-not $ResumeAfterUpdate) {
     # installs unattended (starts the 14-day Premium trial; tech/customer
     # picks license or Free at first launch). Skip the install for
     # pre-image boxes that should get MWB post-deploy instead.
-    Write-Host ""
-    $answer = Read-Host "Download Malwarebytes installer to Downloads folder? (Y/N)"
-    $doDownloadMWB = $answer -match '^(y|yes)$'
+    # v3.9.3: always download, never install (installer waits in Downloads).
+    $doDownloadMWB = $true
     $doInstallMWB  = $false
-    if ($doDownloadMWB) {
-        $answer = Read-Host "  Also INSTALL Malwarebytes now (silent, after download)? (Y/N)"
-        $doInstallMWB = $answer -match '^(y|yes)$'
-    }
 
     # --- Install iDezign-branded TeamViewer Host ---
     # The custom-branded URL custom.teamviewer.com/idhelp serves an EXE that
     # already has Eric's account/branding baked in. /S = silent install.
     # We install (not just download) because TV needs to be running on every
     # imaged machine so Eric has remote access. Unlike MWB, no license prompt.
-    Write-Host ""
-    $answer = Read-Host "Install iDezign-branded TeamViewer Host (from custom.teamviewer.com/idhelp)? (Y/N)"
-    $doInstallTV = $answer -match '^(y|yes)$'
+    $doInstallTV = $true
 
     # --- Power settings ---
     # Default workstation/server tuning: never sleep, never spin down disk,
@@ -721,12 +757,10 @@ if (-not $ResumeAfterUpdate) {
     # disks spinning down mid-transaction. Server OS gets this regardless of
     # laptop chassis (servers should never sleep). Laptops are auto-skipped
     # at apply time since users want battery-saving on portables.
-    Write-Host ""
-    # v3.9: no-sleep / no-hibernate / power-button-shuts-down are now ALWAYS
-    # applied (Phase 1f-0). This prompt only covers the optional extras.
-    Write-Host "  (Always applied: sleep off, hibernate off, power button = shut down.)" -ForegroundColor DarkGray
-    $answer = Read-Host "Also tune POWER extras (HDD never spins down, display off after 1hr)? (Y/N)"
-    $doConfigurePower = $answer -match '^(y|yes)$'
+    # v3.9: no-sleep / no-hibernate / power-button-shuts-down are ALWAYS
+    # applied (Phase 1f-0). v3.9.3: the extras are always on too (still
+    # skipped automatically on laptops at apply time).
+    $doConfigurePower = $true
 
     # --- Install Open-Shell (classic Start Menu replacement) ---
     # Open-Shell brings back a Windows 7-style Start Menu - useful for older
@@ -734,9 +768,7 @@ if (-not $ResumeAfterUpdate) {
     # installer at ninite.com/openshell because Ninite installers run silently
     # by default (no flags needed) and are always up-to-date. Alternative
     # source: GitHub releases (Open-Shell/Open-Shell-Menu) if Ninite is down.
-    Write-Host ""
-    $answer = Read-Host "Install Open-Shell (classic Start Menu via Ninite)? (Y/N)"
-    $doInstallOpenShell = $answer -match '^(y|yes)$'
+    $doInstallOpenShell = $true
     # v3.5: the "apply iDezign defaults?" sub-question is gone - installing
     # Open-Shell ALWAYS applies the baseline (Win7-style menu, Aero skin) via
     # registry (.DEFAULT hive for new profiles + HKCU). The whole point of
@@ -756,9 +788,7 @@ if (-not $ResumeAfterUpdate) {
     # Each detection is checked at apply time (Phase 1l) via CIM queries; we
     # don't pre-run detection here so the tech can enable this even on a mixed
     # fleet where the exact hardware varies.
-    Write-Host ""
-    $answer = Read-Host "Install vendor driver tools (Dell CU / HP SA / Lenovo Vantage / Intel DSA)? (Y/N)"
-    $doInstallVendorDrivers = $answer -match '^(y|yes)$'
+    $doInstallVendorDrivers = $true
 
     # --- Set network profile to Private + enable sharing/discovery ---
     # Fresh installs default networks to Public, which blocks SMB/file sharing,
@@ -768,9 +798,7 @@ if (-not $ResumeAfterUpdate) {
     # just flipping the category isn't enough - the firewall still blocks.
     # Domain-joined networks are skipped automatically (their category is set
     # by AD, not us).
-    Write-Host ""
-    $answer = Read-Host "Set network profiles to PRIVATE + enable file sharing/discovery? (Y/N)"
-    $doSetNetworkPrivate = $answer -match '^(y|yes)$'
+    $doSetNetworkPrivate = $true
 
     # --- Microsoft Defender scan: REMOVED in v3.5 ---
     # The Quick/Full/Skip scan moved to its own standalone menu tool,
@@ -786,9 +814,7 @@ if (-not $ResumeAfterUpdate) {
     # scanning. We add the standard Dentrix paths + SQL Server paths + the SQL
     # service processes. Exclusions are added even if Dentrix isn't installed
     # yet - they'll activate when it gets installed later (e.g. post-imaging).
-    Write-Host ""
-    $answer = Read-Host "Add Defender exclusions for Dentrix/SQL paths (dental workstations)? (Y/N)"
-    $doDentrixExclusions = $answer -match '^(y|yes)$'
+    $doDentrixExclusions = $true
 
     # --- Strip Microsoft consumer integrations (OneDrive nuke + related) ---
     # Aggressive removal of consumer-grade Microsoft integrations that cause
@@ -802,16 +828,13 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ""
     $answer = Read-Host "Nuke OneDrive entirely (uninstall + block reinstall + restore Documents/Desktop)? (Y/N)"
     $doNukeOneDrive = $answer -match '^(y|yes)$'
-    $doStripTeamsPersonal = $false
-    $doStripMSnags        = $false
-    if ($doNukeOneDrive) {
-        # v3.7: this answer now also gates Phase 2c-3. Only the consumer
-        # 'MicrosoftTeams' package is removed - work/school 'MSTeams' is kept.
-        $answer = Read-Host "  Also remove consumer Teams (personal chat app)? Work/school Teams is NEVER removed. (Y/N)"
-        $doStripTeamsPersonal = $answer -match '^(y|yes)$'
-        $answer = Read-Host "  Also disable 'Get more out of Windows' nags + Windows Backup/sync, Recall, Copilot, New Outlook (26H2 policies)? (Y/N)"
-        $doStripMSnags = $answer -match '^(y|yes)$'
-    }
+    # v3.9.3: Teams is its own question now (no longer tied to OneDrive), and
+    # the nag screens / 26H2 consumer policies are ALWAYS turned off.
+    # Only the consumer 'MicrosoftTeams' package is ever removed - work/school
+    # 'MSTeams' is kept.
+    $answer = Read-Host "Nuke consumer Teams (personal chat app)? Work/school Teams is NEVER removed. (Y/N)"
+    $doStripTeamsPersonal = $answer -match '^(y|yes)$'
+    $doStripMSnags        = $true
 
     # --- Computer rename ---
     Write-Host ""
@@ -870,7 +893,7 @@ if (-not $ResumeAfterUpdate) {
 
     Write-Host ""
     Write-Host "Summary:" -ForegroundColor Cyan
-    Write-Host ("  Unattended      : " + ($(if($unattended){"YES (auto sign-in as $CurrentUser, auto reboot, max $IdzAutoLogonCap)"}else{'NO (you sign in + confirm reboots)'})))
+    Write-Host ("  Unattended      : " + ($(if($unattended){"YES (auto sign-in as $IdzRepairName, auto reboot, max $IdzAutoLogonCap)"}else{'NO (you sign in + confirm reboots)'})))
     $chromeSummary = if ($doInstallChrome) { 'YES (+ set default)' } else { 'NO' }
     $openShellSummary = if ($doInstallOpenShell) { 'YES (+ iDezign Win7 defaults)' } else { 'NO' }
     $mwbSummary = if ($doDownloadMWB) {
@@ -887,13 +910,9 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
     Write-Host ("  Dentrix excl.   : " + ($(if($doDentrixExclusions){'YES (Dentrix + SQL paths)'}else{'NO'})))
     # OneDrive nuke summary with sub-option indicators
-    $odSummary = if ($doNukeOneDrive) {
-        $extras = @()
-        if ($doStripTeamsPersonal) { $extras += 'consumer Teams only' }
-        if ($doStripMSnags)        { $extras += 'nags + 26H2 policies' }
-        if ($extras.Count -gt 0)   { "YES (+ $($extras -join '/'))" } else { 'YES' }
-    } else { 'NO' }
-    Write-Host ("  Nuke OneDrive   : " + $odSummary)
+    Write-Host ("  Nag screens     : ALWAYS OFF (+ 26H2 policies)")
+    Write-Host ("  Nuke OneDrive   : " + ($(if($doNukeOneDrive){'YES'}else{'NO'})))
+    Write-Host ("  Nuke Teams      : " + ($(if($doStripTeamsPersonal){'YES (consumer only; work/school kept)'}else{'NO'})))
     Write-Host ("  REPAIR account  : ENSURE EXISTS (always)")
     Write-Host ("  Rename computer : " + ($(if($doRenameComputer){"YES -> $newComputerName"}else{'NO'})))
     Write-Host ("  Rename user     : " + ($(if($doRenameUser){"YES -> $newUserName"}else{'NO'})))
@@ -1216,6 +1235,15 @@ function Set-ResumeRunOnce {
         # v3.7: run as the launching admin (SID, so a later rename of the
         # account does not break the lookup), interactive, highest privileges.
         $curSid    = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        # v3.9.2: in unattended mode Windows signs in as REPAIR after the
+        # reboot, so the resume task must belong to REPAIR or it never fires.
+        if ($unattended) {
+            try {
+                $curSid = (New-Object Security.Principal.NTAccount("$env:COMPUTERNAME\$IdzRepairName")).Translate([Security.Principal.SecurityIdentifier]).Value
+            } catch {
+                Write-Host "  (could not resolve the $IdzRepairName account for the resume task: $($_.Exception.Message))" -ForegroundColor DarkYellow
+            }
+        }
         $principal = New-ScheduledTaskPrincipal -UserId $curSid -LogonType Interactive -RunLevel Highest
         $settings  = New-ScheduledTaskSettingsSet `
                         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
@@ -3015,7 +3043,13 @@ if ($doNukeOneDrive) {
         Write-Host "  OneDrive nuke PARTIAL - $env:ProgramFiles\Microsoft OneDrive\OneDrive.exe still present (locked or uninstaller refused). Re-run after reboot." -ForegroundColor Yellow
     }
     Write-Host "  Users may need to sign out and back in to fully purge OneDrive Explorer integration." -ForegroundColor DarkYellow
+} else {
+    Write-Host "`n[Phase 1k] OneDrive nuke: SKIPPED." -ForegroundColor DarkGray
+}
 
+# v3.9.3: Teams removal and the nag/26H2 policies no longer depend on the
+# OneDrive answer - Teams has its own question, nags are always turned off.
+if ($true) {
     # --- Sub-phase: strip Teams personal version ---
     if ($doStripTeamsPersonal) {
         Write-Host "  Removing Teams personal version chat icon..." -ForegroundColor DarkGray
@@ -3195,8 +3229,6 @@ if ($doNukeOneDrive) {
         & $setPol $explPolM 'HideRecommendedPersonalizedSites' 1 'DWord' 'Explorer: HideRecommendedPersonalizedSites=1'
         & $setPol $explPolM 'HideRecentlyAddedApps'            1 'DWord' 'Explorer: HideRecentlyAddedApps=1'
     }
-} else {
-    Write-Host "`n[Phase 1k] OneDrive nuke: SKIPPED." -ForegroundColor DarkGray
 }
 
 # --- 1l. Vendor driver management tools (hardware-aware) ---
@@ -3882,8 +3914,11 @@ if ($doStripTeamsPersonal) {
 # Chrome recomputes the Bookmarks checksum on next launch, so we drop the stale
 # checksum after editing rather than trying to recompute the MD5 ourselves.
 Write-Host "  [2c-4] Chrome bookmark bar + iDezign.ai bookmark..." -ForegroundColor DarkGray
+# v3.9.3: wrapped in a scriptblock so the same edit can be applied to the
+# REAL user's Chrome profile when the run is in the REPAIR session (2c-5).
+$idzChromeBookmark = {
+param([string]$chromeUserData, [string]$who)
 try {
-    $chromeUserData = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
     $profileDir     = Join-Path $chromeUserData 'Default'
     if (Test-Path $chromeUserData) {
         if (-not (Test-Path $profileDir)) { New-Item -Path $profileDir -ItemType Directory -Force | Out-Null }
@@ -3926,12 +3961,87 @@ try {
         $raw = $raw -replace '("checksum"\s*:\s*")[0-9a-fA-F]*(")', '${1}${2}'
         Set-Content -LiteralPath $bmPath -Value $raw -Encoding UTF8
 
-        Write-Host "    Bookmark bar enabled + iDezign.ai bookmark ensured (current user)." -ForegroundColor DarkGray
+        Write-Host "    Bookmark bar enabled + iDezign.ai bookmark ensured ($who)." -ForegroundColor DarkGray
     } else {
-        Write-Host "    (Chrome user-data folder not found - skipping.)" -ForegroundColor DarkGray
+        Write-Host "    (Chrome user-data folder not found for $who - Chrome has not been opened by that account yet; skipping.)" -ForegroundColor DarkGray
     }
 } catch {
-    Write-Host "    (Chrome bookmark step issue: $($_.Exception.Message))" -ForegroundColor DarkYellow
+    Write-Host "    (Chrome bookmark step issue for ${who}: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+}
+& $idzChromeBookmark (Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data') "current user $env:USERNAME"
+
+# --- 2c-5: repeat the per-user steps for the REAL user (v3.9.3) ---------------
+# In unattended mode the run continues in the REPAIR session after the first
+# reboot, so everything written to HKCU / %LOCALAPPDATA% above landed in
+# REPAIR's profile. $CurrentUser is the account that STARTED the run (restored
+# from state.json). When that is someone else, load their registry hive and
+# apply the same per-user settings to them too:
+#   notifications + suggestion nags (2c-1), consumer-content nags + "finish
+#   setting up" nag (1k), Open-Shell Win7 menu (1g), Chrome bookmark (2c-4).
+if ($CurrentUser -and ($CurrentUser -ine $env:USERNAME)) {
+    Write-Host "  [2c-5] Applying per-user settings to the real user '$CurrentUser' as well..." -ForegroundColor DarkGray
+    $ruMounted = $false
+    try {
+        $ruSid = $null
+        foreach ($acct in @("$env:COMPUTERNAME\$CurrentUser", $CurrentUser)) {
+            try { $ruSid = (New-Object Security.Principal.NTAccount($acct)).Translate([Security.Principal.SecurityIdentifier]).Value; break } catch { }
+        }
+        if (-not $ruSid) { throw "account '$CurrentUser' not found" }
+        $ruProfile = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$ruSid" -ErrorAction Stop).ProfileImagePath
+        $ruRoot = "Registry::HKEY_USERS\$ruSid"
+        if (-not (Test-Path $ruRoot)) {
+            # Not signed in - load their hive under a temporary name.
+            $ruHive = Join-Path $ruProfile 'NTUSER.DAT'
+            $null = & reg.exe load 'HKU\IdzRealUser' "$ruHive" 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "could not load $ruHive (is the account signed in elsewhere?)" }
+            $ruMounted = $true
+            $ruRoot = 'Registry::HKEY_USERS\IdzRealUser'
+        }
+
+        $ruSet = {
+            param($SubKey, $Name, $Value, $Type)
+            $p = "$ruRoot\$SubKey"
+            if (-not (Test-Path $p)) { New-Item -Path $p -Force -ErrorAction Stop | Out-Null }
+            Set-ItemProperty -Path $p -Name $Name -Value $Value -Type $Type -Force -ErrorAction Stop
+        }
+        # 2c-1: notifications + suggestion nags
+        & $ruSet 'Software\Microsoft\Windows\CurrentVersion\PushNotifications' 'ToastEnabled' 0 'DWord'
+        & $ruSet 'Software\Policies\Microsoft\Windows\Explorer' 'DisableNotificationCenter' 1 'DWord'
+        # 1k: consumer-content nags (same list as the current-user pass) + OOBE nag
+        if ($doStripMSnags) {
+            foreach ($n in 'SubscribedContent-310093Enabled','SubscribedContent-338388Enabled','SubscribedContent-338389Enabled',
+                           'SubscribedContent-353698Enabled','SilentInstalledAppsEnabled','RotatingLockScreenOverlayEnabled',
+                           'SystemPaneSuggestionsEnabled','OemPreInstalledAppsEnabled','PreInstalledAppsEnabled','SoftLandingEnabled',
+                           'ScoobeSystemSettingEnabled') {
+                & $ruSet 'Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager' $n 0 'DWord'
+            }
+            & $ruSet 'Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement' 'ScoobeSystemSettingEnabled' 0 'DWord'
+        }
+        # 1g: Open-Shell Win7-style menu
+        if ($doApplyOpenShellDefaults -and ((Test-Path 'C:\Program Files\Open-Shell') -or (Test-Path 'C:\Program Files (x86)\Open-Shell'))) {
+            & $ruSet 'Software\IvoSoft\ClassicStartMenu\Settings' 'MenuStyle' 2 'DWord'
+            & $ruSet 'Software\IvoSoft\ClassicStartMenu\Settings' 'SkinW7' 'Windows Aero' 'String'
+        }
+        Write-Host "    Registry settings applied to '$CurrentUser'." -ForegroundColor DarkGray
+
+        # 2c-4: Chrome bookmark in their profile
+        & $idzChromeBookmark (Join-Path $ruProfile 'AppData\Local\Google\Chrome\User Data') "real user $CurrentUser"
+    } catch {
+        Write-Host "    Could not apply per-user settings to '$CurrentUser': $($_.Exception.Message)" -ForegroundColor DarkYellow
+    } finally {
+        if ($ruMounted) {
+            # Registry handles must be released before the hive will unload.
+            Remove-Variable ruSet -ErrorAction SilentlyContinue
+            [gc]::Collect(); [gc]::WaitForPendingFinalizers()
+            $null = & reg.exe unload 'HKU\IdzRealUser' 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Start-Sleep -Seconds 2; [gc]::Collect()
+                $null = & reg.exe unload 'HKU\IdzRealUser' 2>&1
+                if ($LASTEXITCODE -ne 0) { Write-Host "    (their registry hive stays loaded until the next reboot - harmless)" -ForegroundColor DarkGray }
+            }
+        }
+    }
 }
 
 #endregion
@@ -3968,8 +4078,8 @@ if ($IsDC) {
 
 if ($doRepair) {
 
-$repairName = 'REPAIR'
-$repairPwd  = 'achtung'
+$repairName = $IdzRepairName
+$repairPwd  = $IdzRepairPwd
 
 # ---------------------------------------------------------------------------
 # LocalAccounts cmdlets (Get-LocalUser, New-LocalUser, etc.) sometimes fail to
