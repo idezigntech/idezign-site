@@ -4,6 +4,24 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v4.0 - 2026-11-11 - Major: Cleanup runs start-to-finish unattended; standard build with five questions
+  Version bump only - same code as the last v3.9 build. 4.0 marks the
+  point where Cleanup became a hands-off tool. What that covers (details
+  in the v3.9 entries below):
+  * Unattended mode: REPAIR is set up in preflight, Windows signs in as
+    REPAIR after each update reboot (capped at 8, switched off and erased
+    when the update loop ends), reboots happen without asking.
+  * Standard build: Chrome, Claude Desktop, Malwarebytes download,
+    TeamViewer Host, power policy + extras, Open-Shell, vendor driver
+    tools, network Private + sharing, Defender exclusions and nag screens
+    off are always done. Only five questions remain: unattended, Nuke
+    OneDrive, Nuke Teams, rename computer, rename user. No "Proceed?".
+  * Per-user settings are applied to the real user as well as REPAIR.
+  * TeamViewer downloads through the signed-link exchange and installs.
+  * Launcher, menu and Cleanup always run as 64-bit PowerShell.
+  * Power button = shut down; sleep and hibernate always off.
+  * Open-Shell install no longer waits for a click.
+
 v3.9 (fourth build) - 2026-11-11 - Cleanup: unattended mode signs in as REPAIR (no user password)
   * Unattended mode no longer asks for the end user's password. Answering
     Y sets up the REPAIR account right there in preflight (create or
