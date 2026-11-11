@@ -90,7 +90,126 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.10-v3.9-teamviewer-signed-link'
+$ScriptVersion = '2026.11.11-v3.9.1-unattended-autologon'
+
+#region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
+# Lets a Cleanup run survive its Windows Update reboots with nobody at the
+# keyboard: Windows signs the account in automatically, the resume task
+# fires, the run continues. How it is kept safe:
+#   * The password is asked for hidden, verified against Windows first, and
+#     stored ONLY as an LSA secret ("DefaultPassword" - the same encrypted
+#     system store Microsoft's Sysinternals Autologon tool uses). It is never
+#     written to state.json, the transcript, or the plaintext Winlogon value.
+#   * AutoLogonCount caps the automatic sign-ins, so a crashed run cannot
+#     leave the machine signing itself in forever.
+#   * Auto-logon is switched off and the secret erased as soon as the update
+#     loop is done (before renames), again at wrap-up, and at the start of
+#     the next fresh run if a previous run left it armed.
+$IdzWinlogonKey   = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+$IdzToolkitKey    = 'HKLM:\SOFTWARE\iDezign\Toolkit'
+$IdzAutoLogonCap  = 8
+
+function Initialize-IdzLsa {
+    if ('IdzLsa' -as [type]) { return $true }
+    try {
+        Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class IdzLsa {
+    [StructLayout(LayoutKind.Sequential)]
+    struct LSA_UNICODE_STRING { public UInt16 Length; public UInt16 MaximumLength; public IntPtr Buffer; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct LSA_OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+    [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr systemName, ref LSA_OBJECT_ATTRIBUTES oa, uint access, out IntPtr handle);
+    [DllImport("advapi32.dll")] static extern uint LsaStorePrivateData(IntPtr handle, ref LSA_UNICODE_STRING key, ref LSA_UNICODE_STRING data);
+    [DllImport("advapi32.dll", EntryPoint="LsaStorePrivateData")] static extern uint LsaDeletePrivateData(IntPtr handle, ref LSA_UNICODE_STRING key, IntPtr data);
+    [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr handle);
+    [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
+    [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] static extern bool LogonUser(string user, string domain, string password, int logonType, int provider, out IntPtr token);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    static LSA_UNICODE_STRING Make(string s) {
+        LSA_UNICODE_STRING u = new LSA_UNICODE_STRING();
+        u.Buffer = Marshal.StringToHGlobalUni(s);
+        u.Length = (UInt16)(s.Length * 2);
+        u.MaximumLength = (UInt16)((s.Length + 1) * 2);
+        return u;
+    }
+    // value == null deletes the secret. Returns 0 on success, else a Win32 error code.
+    public static int StoreSecret(string key, string value) {
+        LSA_OBJECT_ATTRIBUTES oa = new LSA_OBJECT_ATTRIBUTES();
+        oa.Length = Marshal.SizeOf(typeof(LSA_OBJECT_ATTRIBUTES));
+        IntPtr h;
+        uint st = LsaOpenPolicy(IntPtr.Zero, ref oa, 0x20 /* POLICY_CREATE_SECRET */, out h);
+        if (st != 0) return LsaNtStatusToWinError(st);
+        LSA_UNICODE_STRING k = Make(key);
+        try {
+            if (value == null) {
+                st = LsaDeletePrivateData(h, ref k, IntPtr.Zero);
+            } else {
+                LSA_UNICODE_STRING v = Make(value);
+                try { st = LsaStorePrivateData(h, ref k, ref v); }
+                finally { Marshal.ZeroFreeGlobalAllocUnicode(v.Buffer); }
+            }
+        } finally { Marshal.FreeHGlobal(k.Buffer); LsaClose(h); }
+        return st == 0 ? 0 : LsaNtStatusToWinError(st);
+    }
+    // Interactive logon check. Returns 0 when the password is right, else the Win32 error.
+    public static int TestLogon(string user, string domain, string password) {
+        IntPtr tok;
+        if (LogonUser(user, domain, password, 2, 0, out tok)) { CloseHandle(tok); return 0; }
+        return Marshal.GetLastWin32Error();
+    }
+}
+'@
+        return $true
+    } catch {
+        Write-Host "  (auto-logon helper could not load: $($_.Exception.Message))" -ForegroundColor DarkYellow
+        return $false
+    }
+}
+
+function Disable-IdzAutoLogon {
+    param([switch]$Quiet)
+    $wasArmed = $false
+    try { $wasArmed = [bool](Get-ItemProperty -Path $IdzToolkitKey -Name 'AutoLogonArmed' -ErrorAction Stop).AutoLogonArmed } catch { }
+    try {
+        Set-ItemProperty -Path $IdzWinlogonKey -Name 'AutoAdminLogon' -Value '0' -Type String -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $IdzWinlogonKey -Name 'AutoLogonCount'  -ErrorAction SilentlyContinue
+        Remove-ItemProperty -Path $IdzWinlogonKey -Name 'DefaultPassword' -ErrorAction SilentlyContinue
+        if (Initialize-IdzLsa) { [void][IdzLsa]::StoreSecret('DefaultPassword', $null) }
+        Remove-ItemProperty -Path $IdzToolkitKey -Name 'AutoLogonArmed' -ErrorAction SilentlyContinue
+    } catch { }
+    if ($wasArmed -and -not $Quiet) {
+        Write-Host "  Unattended auto-logon switched OFF; stored password erased." -ForegroundColor Green
+    }
+}
+
+function Enable-IdzAutoLogon {
+    # Returns $true when auto-logon is armed for $User.
+    param([string]$User, [string]$Domain, [string]$Password)
+    if (-not (Initialize-IdzLsa)) { return $false }
+    $rc = [IdzLsa]::StoreSecret('DefaultPassword', $Password)
+    if ($rc -ne 0) {
+        Write-Host "  Could not store the password securely (error $rc) - unattended mode OFF." -ForegroundColor Red
+        return $false
+    }
+    try {
+        Remove-ItemProperty -Path $IdzWinlogonKey -Name 'DefaultPassword' -ErrorAction SilentlyContinue   # never leave a plaintext copy
+        Set-ItemProperty -Path $IdzWinlogonKey -Name 'DefaultUserName'   -Value $User   -Type String -ErrorAction Stop
+        Set-ItemProperty -Path $IdzWinlogonKey -Name 'DefaultDomainName' -Value $Domain -Type String -ErrorAction Stop
+        Set-ItemProperty -Path $IdzWinlogonKey -Name 'AutoLogonCount'    -Value $IdzAutoLogonCap -Type DWord -ErrorAction Stop
+        Set-ItemProperty -Path $IdzWinlogonKey -Name 'AutoAdminLogon'    -Value '1'     -Type String -ErrorAction Stop
+        if (-not (Test-Path $IdzToolkitKey)) { New-Item -Path $IdzToolkitKey -Force | Out-Null }
+        Set-ItemProperty -Path $IdzToolkitKey -Name 'AutoLogonArmed' -Value 1 -Type DWord
+        return $true
+    } catch {
+        Write-Host "  Could not arm auto-logon: $($_.Exception.Message)" -ForegroundColor Red
+        Disable-IdzAutoLogon -Quiet
+        return $false
+    }
+}
+#endregion
 
 $ScriptPath = $MyInvocation.MyCommand.Path
 
@@ -515,6 +634,47 @@ if (-not $ResumeAfterUpdate) {
         exit 0
     }
 
+    # --- Unattended mode (v3.9.1) ---
+    # A previous run that crashed may have left auto-logon armed - clear it.
+    Disable-IdzAutoLogon -Quiet
+    $unattended = $false
+    Write-Host ""
+    Write-Host "UNATTENDED mode: Windows signs '$CurrentUser' in by itself after each update" -ForegroundColor Cyan
+    Write-Host "reboot (max $IdzAutoLogonCap times) and reboots without asking, so the run finishes" -ForegroundColor Cyan
+    Write-Host "with nobody at the keyboard. The machine is OPEN (no password) while it runs." -ForegroundColor Yellow
+    $answer = Read-Host "Run fully UNATTENDED? (Y/N)"
+    if ($answer -match '^(y|yes)$') {
+        try {
+            $plVal = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\PasswordLess\Device' -Name DevicePasswordLessBuildVersion -ErrorAction Stop).DevicePasswordLessBuildVersion
+            if ($plVal -eq 2) {
+                Write-Host "  Note: 'passwordless sign-in' is ON for this PC (Hello/PIN only). Auto-logon may be" -ForegroundColor DarkYellow
+                Write-Host "  ignored by Windows - if the first reboot stops at the sign-in screen, that is why." -ForegroundColor DarkYellow
+            }
+        } catch { }
+        for ($try = 1; $try -le 3 -and -not $unattended; $try++) {
+            $sec = Read-Host "  Password for '$env:USERDOMAIN\$CurrentUser' (hidden; Enter alone = cancel unattended)" -AsSecureString
+            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+            $plainPw = $null
+            try { $plainPw = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+            if ([string]::IsNullOrEmpty($plainPw)) { Write-Host "  Unattended mode cancelled." -ForegroundColor DarkGray; break }
+            $logonRc = -1
+            if (Initialize-IdzLsa) { $logonRc = [IdzLsa]::TestLogon($CurrentUser, $env:USERDOMAIN, $plainPw) }
+            if ($logonRc -eq 0) {
+                if (Enable-IdzAutoLogon -User $CurrentUser -Domain $env:USERDOMAIN -Password $plainPw) {
+                    $unattended = $true
+                    Write-Host "  Password verified. Auto-logon armed for $IdzAutoLogonCap sign-ins; it is removed when the update loop finishes." -ForegroundColor Green
+                }
+            } elseif ($logonRc -eq 1326) {
+                Write-Host "  That password was not accepted by Windows (attempt $try of 3)." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Windows could not verify the password (error $logonRc) - unattended mode needs a" -ForegroundColor Yellow
+                Write-Host "  local or domain account password; Microsoft-account / PIN-only sign-ins may not work." -ForegroundColor Yellow
+            }
+            $plainPw = $null
+        }
+        if (-not $unattended) { Write-Host "  Continuing in normal (attended) mode." -ForegroundColor DarkGray }
+    }
+
     # --- Install Chrome ---
     Write-Host ""
     $answer = Read-Host "Install Google Chrome? (Y/N)"
@@ -702,6 +862,7 @@ if (-not $ResumeAfterUpdate) {
         DoRenameUser             = [bool]$doRenameUser
         NewUserName              = $newUserName
         OriginalUser             = $CurrentUser
+        Unattended               = [bool]$unattended
         PendingRebootRetries     = 0
         Created                  = (Get-Date -Format 'o')
     }
@@ -709,6 +870,7 @@ if (-not $ResumeAfterUpdate) {
 
     Write-Host ""
     Write-Host "Summary:" -ForegroundColor Cyan
+    Write-Host ("  Unattended      : " + ($(if($unattended){"YES (auto sign-in as $CurrentUser, auto reboot, max $IdzAutoLogonCap)"}else{'NO (you sign in + confirm reboots)'})))
     $chromeSummary = if ($doInstallChrome) { 'YES (+ set default)' } else { 'NO' }
     $openShellSummary = if ($doInstallOpenShell) { 'YES (+ iDezign Win7 defaults)' } else { 'NO' }
     $mwbSummary = if ($doDownloadMWB) {
@@ -778,6 +940,9 @@ if (-not $ResumeAfterUpdate) {
             # account (RunOnce fallback, tech logged in as REPAIR), Phase 4
             # must still rename the ORIGINAL account, not whoever is logged in.
             if ($state.OriginalUser) { $CurrentUser = [string]$state.OriginalUser }
+            # v3.9.1: unattended flag survives the reboots (the password does not live here)
+            $unattended = $false
+            try { $unattended = [bool]$state.Unattended } catch { }
 
             # Handle older state files that don't have these fields yet.
             # Each Add-Member is idempotent if the field already exists with -Force.
@@ -1503,7 +1668,12 @@ if (-not $skipUpdates) {
             Set-ResumeRunOnce  # resume trigger is registered EITHER way - so script resumes whenever reboot happens
 
             $rebooted = $false
-            if (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
+            if ($unattended) {
+                # v3.9.1: no prompt - auto-logon brings the run back after the reboot
+                Write-Host "  UNATTENDED: rebooting in 30 seconds; Windows will sign in and the run resumes." -ForegroundColor Cyan
+                shutdown /r /t 30 /c "iDezign Cleanup (unattended): update pass $pass complete - rebooting to continue."
+                $rebooted = $true
+            } elseif (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
                 $rebooted = Invoke-RebootChoice `
                     -Reason "Windows Update pass $pass complete; continuing after reboot" `
                     -CountdownSeconds 30 `
@@ -1622,7 +1792,11 @@ if ($pendingSignals.Count -gt 0) {
         Set-ResumeRunOnce
 
         $rebooted = $false
-        if (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
+        if ($unattended) {
+            Write-Host "  UNATTENDED: rebooting in 30 seconds to clear pending operations." -ForegroundColor Cyan
+            shutdown /r /t 30 /c "iDezign Cleanup (unattended): clearing pending operations - rebooting to continue."
+            $rebooted = $true
+        } elseif (Get-Command Invoke-RebootChoice -ErrorAction SilentlyContinue) {
             $rebooted = Invoke-RebootChoice `
                 -Reason "Pending Windows operations need to clear before DISM cleanup" `
                 -CountdownSeconds 30 `
@@ -1654,6 +1828,10 @@ if ($pendingSignals.Count -gt 0) {
 
 # We're past the update loop entirely now - no more auto-resumes needed.
 Clear-ResumeRunOnce
+# v3.9.1: ...and no more automatic sign-ins either. Nothing after this point
+# reboots by itself, so switch auto-logon off and erase the stored password
+# now (also keeps it from fighting the Phase 4 account rename).
+Disable-IdzAutoLogon
 
 #endregion
 
@@ -4033,6 +4211,8 @@ if ($doRenameComputer) {
 # time across every update reboot - grab it before the file is deleted below.
 $runStarted = Get-Date
 try { if ($state -and $state.Created) { $runStarted = [datetime]$state.Created } } catch { }
+# v3.9.1: belt and suspenders - auto-logon must never outlive the run.
+Disable-IdzAutoLogon -Quiet
 
 if (Test-Path $StateFile) {
     Remove-Item -Path $StateFile -Force -ErrorAction SilentlyContinue

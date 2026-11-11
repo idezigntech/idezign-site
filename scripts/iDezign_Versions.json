@@ -4,7 +4,7 @@
   "toolkitVersion": "3.9",
   "scripts": {
     "iDezign_Common.psm1": "2026.11.10-v3.9-teamviewer-link",
-    "iDezign_Cleanup_Utility.ps1": "2026.11.10-v3.9-teamviewer-signed-link",
+    "iDezign_Cleanup_Utility.ps1": "2026.11.11-v3.9.1-unattended-autologon",
     "iDezign_Diagnostics.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Remediation.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Reset_to_OOBE.ps1": "2026.11.09-reset-v1.2-run-history",
