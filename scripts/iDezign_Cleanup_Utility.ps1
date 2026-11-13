@@ -23,6 +23,7 @@
 #        c. Claude Desktop (winget first, MSIX fallback - v3.7; VMP feature
 #           is enabled in Preflight so its reboot is absorbed by the WU loop)
 #        d. Malwarebytes installer (download + optional silent install - v3.5)
+#        d-2. Samsung Magician installer (download only, Samsung drives - v4.0.1)
 #        e. iDezign-branded TeamViewer Host (silent install)
 #        f. Power settings (HDD never, display 1hr, no sleep/hibernate)
 #        g. Open-Shell classic Start Menu (Ninite, winget fallback - v3.7)
@@ -90,7 +91,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.11-v3.9.4-no-proceed-prompt'
+$ScriptVersion = '2026.11.12-v4.0.1-samsung-magician'
 
 #region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
 # Lets a Cleanup run survive its Windows Update reboots with nobody at the
@@ -901,6 +902,7 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Install Claude  : " + ($(if($doInstallClaude){'YES'}else{'NO'})))
     Write-Host ("  Install TV Host : " + ($(if($doInstallTV){'YES (iDezign branded)'}else{'NO'})))
     Write-Host ("  Malwarebytes    : " + $mwbSummary)
+    Write-Host ("  Samsung Magician: ALWAYS when a Samsung drive is present (download only)")
     Write-Host ("  Install OpenShl : " + $openShellSummary)
     Write-Host ("  Vendor drivers  : " + ($(if($doInstallVendorDrivers){'YES (Dell/HP/Lenovo/Intel per-hw)'}else{'NO'})))
     Write-Host ("  Power policy    : ALWAYS (no sleep / no hibernate / power button = shut down)")
@@ -2118,6 +2120,94 @@ if ($doDownloadMWB -and $state.PreflightDone) {
     }
 } else {
     Write-Host "`n[Phase 1d] Malwarebytes download: SKIPPED." -ForegroundColor DarkGray
+}
+
+# --- 1d-2. Samsung Magician download (NO install) - v4.0.1 ---
+# Only when a Samsung drive is present. Samsung's installer refuses silent
+# mode and there is no winget package, so this is download-only (same idea
+# as Malwarebytes): the installer waits in Downloads for the technician.
+# The file name carries the version, so the current link is read from
+# Samsung's tools page; a pinned link is the fallback.
+$magDisks = @()
+try {
+    $magDisks = @(Get-CimInstance -ClassName Win32_DiskDrive -ErrorAction Stop |
+                  Where-Object { $_.Model -match 'Samsung' })
+} catch { }
+$magInstalled = (Test-Path "${env:ProgramFiles(x86)}\Samsung\Samsung Magician\SamsungMagician.exe") -or
+                (Test-Path "$env:ProgramFiles\Samsung\Samsung Magician\SamsungMagician.exe")
+if ($magDisks.Count -eq 0) {
+    Write-Host "`n[Phase 1d-2] Samsung Magician: SKIPPED (no Samsung drive in this machine)." -ForegroundColor DarkGray
+} else {
+    Write-Host "`n[Phase 1d-2] Downloading Samsung Magician installer (download only)..." -ForegroundColor Green
+    if ($magInstalled) {
+        Write-Host "  Magician is already installed - downloading the current installer anyway so it can be updated." -ForegroundColor DarkGray
+    }
+    Write-Host ("  Samsung drive : " + (($magDisks | ForEach-Object { ([string]$_.Model).Trim() }) -join ', ')) -ForegroundColor DarkGray
+
+    # Destination: the real user's Downloads (an unattended run is signed in
+    # as REPAIR, whose Downloads folder nobody will ever look in).
+    $magDir = Join-Path $env:SystemDrive "Users\$CurrentUser\Downloads"
+    if (-not (Test-Path $magDir)) { $magDir = Join-Path $env:USERPROFILE 'Downloads' }
+    if (-not (Test-Path $magDir)) { New-Item -Path $magDir -ItemType Directory -Force | Out-Null }
+
+    $magPage   = 'https://semiconductor.samsung.com/consumer-storage/support/tools/'
+    $magPinned = 'https://download.semiconductor.samsung.com/resources/software-resources/Samsung_Magician_Installer_Official_9.0.1.950.exe'
+    $magUrl    = $null
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = 'SilentlyContinue'
+        $magHtml = (Invoke-WebRequest -Uri $magPage -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop).Content
+        $magHits = [regex]::Matches($magHtml, 'https://download\.semiconductor\.samsung\.com/resources/software-resources/Samsung_Magician_Installer_Official_([0-9.]+)\.exe')
+        $magBest = $null
+        foreach ($h in $magHits) {
+            $v = $null
+            try { $v = [version]$h.Groups[1].Value } catch { }
+            if ($v -and (-not $magBest -or $v -gt $magBest.Ver)) { $magBest = @{ Ver = $v; Url = $h.Value } }
+        }
+        if ($magBest) { $magUrl = $magBest.Url }
+    } catch {
+        Write-Host "  Could not read Samsung's download page: $($_.Exception.Message)" -ForegroundColor DarkYellow
+    }
+    if (-not $magUrl) {
+        $magUrl = $magPinned
+        Write-Host "  Current link not found on Samsung's page - using the pinned 9.0.1 link (may be older)." -ForegroundColor Yellow
+    }
+
+    $magFile = Join-Path $magDir ([IO.Path]::GetFileName($magUrl))
+    Write-Host "  Source      : $magUrl" -ForegroundColor DarkGray
+    Write-Host "  Destination : $magFile" -ForegroundColor DarkGray
+
+    if ((Test-Path $magFile) -and ((Get-Item $magFile).Length -gt 20MB)) {
+        Write-Host "  Already downloaded - keeping the existing file." -ForegroundColor Green
+    } else {
+        $magOk = $false
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $magUrl -OutFile $magFile -UseBasicParsing -TimeoutSec 900 -ErrorAction Stop
+            $magOk = $true
+        } catch {
+            Write-Host "  Download failed: $($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        # Honest check: a real installer starts with 'MZ' and is far over 20 MB.
+        $magValid = $false
+        if ($magOk -and (Test-Path $magFile)) {
+            try {
+                $fs = [IO.File]::OpenRead($magFile)
+                try { $b0 = $fs.ReadByte(); $b1 = $fs.ReadByte() } finally { $fs.Close() }
+                $magValid = ($b0 -eq 0x4D -and $b1 -eq 0x5A -and (Get-Item $magFile).Length -gt 20MB)
+            } catch { }
+        }
+        if ($magValid) {
+            $sizeMB = [math]::Round((Get-Item $magFile).Length / 1MB, 1)
+            Write-Host "  Downloaded: $magFile ($sizeMB MB)" -ForegroundColor Green
+            Write-Host "  NOT installed (Samsung does not allow silent installs) - run it by hand when wanted." -ForegroundColor DarkGray
+        } else {
+            if (Test-Path $magFile) { Remove-Item $magFile -Force -ErrorAction SilentlyContinue }
+            Write-Host "  Samsung Magician was NOT downloaded. Get it by hand from:" -ForegroundColor Red
+            Write-Host "  $magPage" -ForegroundColor Yellow
+        }
+    }
 }
 
 # --- 1e. TeamViewer iDezign-branded Host (silent install) ---
