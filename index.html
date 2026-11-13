@@ -141,6 +141,29 @@ font-size:13px;color:var(--muted);font-weight:400;letter-spacing:.02em;white-spa
 position:absolute;right:-60px;top:40px;font-size:560px;line-height:1;
 color:var(--red);opacity:.035;font-weight:200;pointer-events:none;user-select:none;
 }
+.hero .wrap{display:grid;grid-template-columns:1.25fr .75fr;gap:60px;align-items:start;position:relative;z-index:1}
+.hero .content{min-width:0}
+.hero .side{display:flex;flex-direction:column;gap:22px;padding-top:88px}
+.status-check{
+border:1px solid var(--hair);
+background:#fcfcfc;
+padding:20px 22px;
+display:flex;flex-direction:column;gap:10px;
+box-shadow:0 1px 0 rgba(0,0,0,0.02);
+}
+.status-check .sc-head{
+font-size:13px;font-weight:400;color:var(--muted);
+letter-spacing:.02em;line-height:1.4;margin:0 0 6px;
+}
+.status-check .sc-head .accent{color:var(--red);font-weight:500}
+.status-check a{
+font-size:14px;color:var(--ink);
+display:inline-flex;align-items:center;gap:6px;
+transition:color .25s var(--ease);
+}
+.status-check a:hover{color:var(--red)}
+.status-check a .arrow{color:var(--muted);transition:color .25s var(--ease)}
+.status-check a:hover .arrow{color:var(--red)}
 .eyebrow{
 display:flex;align-items:center;gap:14px;
 font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--red);
@@ -262,6 +285,8 @@ footer .bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wra
 .phone{font-size:13px}
 .grid{grid-template-columns:1fr;gap:40px}
 .hero{padding:80px 0 70px}
+.hero .wrap{grid-template-columns:1fr;gap:34px}
+.hero .side{padding-top:0}
 .hero .caretghost{font-size:300px;right:-30px;opacity:.04}
 .about{padding:70px 0}
 .about .wrap{grid-template-columns:1fr;gap:40px}
@@ -308,12 +333,21 @@ footer .top{flex-direction:column}
 <section class="hero">
 <div class="caretghost">^</div>
 <div class="wrap">
+<div class="content">
 <div class="eyebrow reveal d1">IT &amp; Artificial Intelligence · Northern California</div>
 <h1 class="reveal d2">Technology that just <span class="accent">works</span>.<span class="sub">Now to the power of AI.</span></h1>
 <p class="lede reveal d3">Hands-on IT since 1997 — networks designed and cabled, machines repaired and built, systems that hold up. Now putting <b>AI</b> to work for real businesses too, with tools that fit the systems you already run. Onsite in Northern California, remote anywhere.</p>
 <div class="actions reveal d4">
 <a href="/help/" class="btn-primary">Start a remote session &nbsp;→</a>
 <a href="#contact" class="btn-text">Start a conversation</a>
+</div>
+</div>
+<div class="side reveal d4">
+<div class="status-check">
+<p class="sc-head">Technology that <span class="accent">ISN&rsquo;T</span> working, right now?</p>
+<a href="https://downdetector.com/" target="_blank" rel="noopener noreferrer" title="Check if a service is having an outage">Is it down? (Downdetector) <span class="arrow">↗</span></a>
+<a href="https://fast.com/" target="_blank" rel="noopener noreferrer" title="Test your internet speed (Netflix)">Test my internet (Fast.com) <span class="arrow">↗</span></a>
+</div>
 </div>
 </div>
 </section>
