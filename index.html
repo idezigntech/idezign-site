@@ -203,8 +203,15 @@ font-weight:400;display:flex;align-items:center;gap:14px;
 }
 .sec-head::before{content:"";width:34px;height:1px;background:var(--red)}
 .sec-note{font-size:14px;color:#a0a0a0;letter-spacing:.02em}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:54px}
-.card{display:block;color:inherit}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:28px}
+.card{
+display:block;color:inherit;
+border:1px solid var(--ink);
+padding:28px 28px 30px;
+background:#fff;
+transition:border-color .3s var(--ease),transform .3s var(--ease),box-shadow .3s var(--ease);
+}
+.card:hover{border-color:var(--red);transform:translateY(-2px);box-shadow:0 10px 30px -18px rgba(22,22,22,.25)}
 .card .tick{width:30px;height:2px;background:var(--red);margin-bottom:20px;transition:width .4s var(--ease)}
 .card:hover .tick{width:54px}
 .card h3{font-weight:400;font-size:21px;margin-bottom:12px;letter-spacing:-.01em}
