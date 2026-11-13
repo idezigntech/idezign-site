@@ -4,6 +4,17 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v4.0 (second build) - 2026-11-12 - Cleanup: Samsung Magician download on Samsung-drive machines
+  * New Phase 1d-2: when the machine has a Samsung drive, Cleanup downloads
+    the current Samsung Magician installer to the user's Downloads folder,
+    even if Magician is already installed (so it can be updated). No
+    question asked.
+  * Download only, like Malwarebytes: Samsung's installer refuses silent
+    mode and there is no winget package, so it is not installed.
+  * The current installer link is read from Samsung's tools page (the file
+    name carries the version); a pinned 9.0.1 link is the fallback. The
+    download is checked (real .exe, over 20 MB) before it is reported.
+
 v4.0 - 2026-11-11 - Major: Cleanup runs start-to-finish unattended; standard build with five questions
   Version bump only - same code as the last v3.9 build. 4.0 marks the
   point where Cleanup became a hands-off tool. What that covers (details
