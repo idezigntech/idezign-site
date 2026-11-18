@@ -4,6 +4,14 @@ Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big change
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v4.0 (third build) - 2026-11-18 - Cleanup: TeamViewer is optional again and can no longer hang the run
+  * Preflight asks "Install iDezign TeamViewer Host? (Y/N)". N skips
+    Phase 1e entirely.
+  * When it does run, the signed-link download has a hard 5-minute cap:
+    a run sat forever on "Asking TeamViewer for the signed installer
+    link...". It now gives up, says so, and Cleanup carries on.
+  * The standalone TeamViewer tool (menu #7) is unchanged.
+
 v4.0 (second build) - 2026-11-12 - Cleanup: Samsung Magician download on Samsung-drive machines
   * New Phase 1d-2: when the machine has a Samsung drive, Cleanup downloads
     the current Samsung Magician installer to the user's Downloads folder,
