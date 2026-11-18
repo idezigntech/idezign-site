@@ -91,7 +91,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.12-v4.0.1-samsung-magician'
+$ScriptVersion = '2026.11.18-v4.0.2-teamviewer-optional'
 
 #region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
 # Lets a Cleanup run survive its Windows Update reboots with nobody at the
@@ -747,7 +747,9 @@ if (-not $ResumeAfterUpdate) {
     # already has Eric's account/branding baked in. /S = silent install.
     # We install (not just download) because TV needs to be running on every
     # imaged machine so Eric has remote access. Unlike MWB, no license prompt.
-    $doInstallTV = $true
+    # v4.0.2: optional again - asked with the other questions below (the
+    # download hung a run). Default until asked is NO.
+    $doInstallTV = $false
 
     # --- Power settings ---
     # Default workstation/server tuning: never sleep, never spin down disk,
@@ -833,6 +835,10 @@ if (-not $ResumeAfterUpdate) {
     # 'MSTeams' is kept.
     $answer = Read-Host "Nuke consumer Teams (personal chat app)? Work/school Teams is NEVER removed. (Y/N)"
     $doStripTeamsPersonal = $answer -match '^(y|yes)$'
+
+    # v4.0.2: TeamViewer is a question again (N = skip Phase 1e entirely).
+    $answer = Read-Host "Install iDezign TeamViewer Host? (Y/N)"
+    $doInstallTV = $answer -match '^(y|yes)$'
     $doStripMSnags        = $true
 
     # --- Computer rename ---
@@ -2231,7 +2237,29 @@ if ($doInstallTV) {
     # exchange and validates the result (see Get-iDezignTeamViewerInstaller).
     if (Get-Command Get-iDezignTeamViewerInstaller -ErrorAction SilentlyContinue) {
         Write-Host "  Asking TeamViewer for the signed installer link..." -ForegroundColor DarkGray
-        $tvDl = Get-iDezignTeamViewerInstaller -PageUrl $tvUrl -OutDir $StagingDir
+        # v4.0.2: hard 5-minute cap. The web calls inside have their own
+        # timeouts, but PS 5.1 does not apply them to a stalled transfer, and
+        # one run sat on this line indefinitely. Run it in a job we can kill.
+        $tvDl = @{ Path = $null; Error = 'gave up after 5 minutes (no answer from TeamViewer)'; Step = 'timeout' }
+        $tvJob = $null
+        try {
+            $tvJob = Start-Job -ArgumentList @($ModulePath, $tvUrl, $StagingDir) -ScriptBlock {
+                param($m, $u, $d)
+                Import-Module $m -Force -ErrorAction Stop
+                Get-iDezignTeamViewerInstaller -PageUrl $u -OutDir $d
+            }
+            if (Wait-Job -Job $tvJob -Timeout 300) {
+                $tvOut = @(Receive-Job -Job $tvJob -ErrorAction SilentlyContinue) | Where-Object { $_ -is [hashtable] } | Select-Object -Last 1
+                if ($tvOut) { $tvDl = $tvOut }
+                else { $tvDl = @{ Path = $null; Error = 'no result came back'; Step = 'job' } }
+            } else {
+                Stop-Job -Job $tvJob -ErrorAction SilentlyContinue
+            }
+        } catch {
+            $tvDl = @{ Path = $null; Error = $_.Exception.Message; Step = 'job' }
+        } finally {
+            if ($tvJob) { Remove-Job -Job $tvJob -Force -ErrorAction SilentlyContinue }
+        }
         if ($tvDl.Path) {
             $tvExe = $tvDl.Path
             $downloaded = $true
