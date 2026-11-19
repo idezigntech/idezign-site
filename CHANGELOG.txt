@@ -1,8 +1,32 @@
 iDezign Toolkit - Changelog
 ===========================
-Versioning: minor bump (x.Y) for tweaks & fixes, major bump (X.0) for big changes.
+Versioning: every published change bumps the version by .1 (4.1, 4.2, 4.3 ...).
+No "second build" or .01 steps. Major bump (X.0) for big changes.
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
+
+v4.1 - 2026-11-18 - Cleanup: Defender exclusions AND firewall rules for both Dentrix and QuickBooks
+  * Dentrix already had Defender exclusions (Phase 1j). New Phase 1j-1
+    adds its firewall rules when Dentrix is installed: SQL Server and SQL
+    Browser allowed by program, UDP 1434, and the Dentrix service ports
+    TCP 5712, 6597, 6602-6606, 6610 (port list from a third-party IT
+    reference, not a Henry Schein document). Group "iDezign Dentrix".
+  * QuickBooks gets Defender exclusions too: its program folders, its
+    programs, C:\ProgramData\Intuit and the public company-file folder,
+    verified after adding.
+  * New Phase 1j-2 (runs with the Dentrix/SQL step, no question): when
+    QuickBooks Desktop is installed, Cleanup adds Windows Firewall allow
+    rules, inbound and outbound, for every QuickBooks program it finds
+    (QBW, QBDBMgrN, QBCFMonitorService, QBServerUtilityMgr, QBUpdate,
+    FileManagement and the rest of Intuit's list) plus TCP 8019. This is
+    what multi-user mode needs (errors H202 / H505).
+  * Rules are program based, so the database port that changes with each
+    QuickBooks year is covered without a port list.
+  * Domain + Private profiles only, never Public. Rules sit in the group
+    "iDezign QuickBooks" and are rebuilt each run; the count is verified.
+  * No QuickBooks on the machine = one-line skip.
+  * Includes the two v4.0 follow-up builds below (Samsung Magician
+    download, TeamViewer optional + 5-minute cap).
 
 v4.0 (third build) - 2026-11-18 - Cleanup: TeamViewer is optional again and can no longer hang the run
   * Preflight asks "Install iDezign TeamViewer Host? (Y/N)". N skips
