@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Continue'
 
 # Module version - bumped when shared module behavior changes. Exported via
 # Get-iDezignCommonVersion so scripts can verify which module version they loaded.
-$script:ModuleVersion = '2026.11.10-v3.9-teamviewer-link'
+$script:ModuleVersion = '2026.11.18-v4.2-honest-version-line'
 
 function Get-iDezignCommonVersion {
     [CmdletBinding()]
@@ -1475,7 +1475,7 @@ function Sync-SystemTime {
     The manifest is the source of truth for the latest version of every script.
     Each tool calls this at startup with its own name + embedded $ScriptVersion.
     Outcomes:
-      * Manifest found + versions match  -> green  "running the LATEST version"
+      * Manifest found + versions match  -> green  "matches this toolkit package"
       * Manifest found + script OLDER    -> yellow "OUTDATED copy" warning
       * Manifest found + script NEWER    -> cyan   "newer than manifest" (you
                                             updated the script but not the JSON)
@@ -1542,7 +1542,12 @@ function Show-VersionCheck {
     }
 
     if ($CurrentVersion -eq $latest) {
-        Write-Host ("  [version] OK - running the LATEST version of {0} (v{1})" -f $ScriptName, $CurrentVersion) -ForegroundColor Green
+        # v4.2: this only compares against the manifest in THIS folder, so it
+        # cannot know about a newer download. Say what was actually checked.
+        $pkgVer = ''
+        try { if ($manifest.toolkitVersion) { $pkgVer = " v$($manifest.toolkitVersion)" } } catch { }
+        Write-Host ("  [version] OK - {0} (v{1}) matches this toolkit package{2}." -f $ScriptName, $CurrentVersion, $pkgVer) -ForegroundColor Green
+        Write-Host "  [version] (Checked against this folder only - the launcher footer shows if a newer toolkit is online.)" -ForegroundColor DarkGray
     } else {
         # Use string comparison to guess direction. Versions are date-prefixed
         # (yyyy.MM.dd-label) so lexical compare == chronological for the date part.

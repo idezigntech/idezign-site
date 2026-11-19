@@ -1,14 +1,14 @@
 {
   "_comment": "iDezign Toolkit version + tool manifest. SINGLE SOURCE OF TRUTH. (1) 'scripts' maps each file to its LATEST version - Show-VersionCheck (in iDezign_Common.psm1) compares a script's embedded version to the value here and prints a green OK or a yellow 'outdated copy' warning. (2) 'tools' is the list of tools the launcher offers - BOTH the GUI (iDezign_Toolkit_GUI.ps1) and the text menu (iDezign_Menu.ps1) build their tool lists by looping over this array, so adding/removing a tool here updates every launcher automatically (no more drift between the .exe GUI, the .bat GUI and the text menu). To add a tool: add a 'scripts' entry for its file AND a 'tools' entry below. If you copy a new set of files into the toolkit folder, copy this manifest too.",
   "manifestUpdated": "2026-11-18",
-  "toolkitVersion": "4.1",
+  "toolkitVersion": "4.2",
   "scripts": {
-    "iDezign_Common.psm1": "2026.11.10-v3.9-teamviewer-link",
+    "iDezign_Common.psm1": "2026.11.18-v4.2-honest-version-line",
     "iDezign_Cleanup_Utility.ps1": "2026.11.18-v4.1-dentrix-quickbooks-rules",
     "iDezign_Diagnostics.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Remediation.ps1": "2026.11.09-v3.8-run-history",
     "iDezign_Reset_to_OOBE.ps1": "2026.11.09-reset-v1.2-run-history",
-    "iDezign_Toolkit_GUI.ps1": "2026.11.10-gui-v3.2-64bit-guard",
+    "iDezign_Toolkit_GUI.ps1": "2026.11.18-gui-v3.3-update-check-direct",
     "iDezign_Migration_Utility.ps1": "2026.11.09-migrate-v2.3-run-history",
     "iDezign_DISM.ps1": "2026.11.09-dism-v1.3-run-history",
     "iDezign_SyncDrives.ps1": "2026.11.09-syncdrives-v1.3-run-history",

@@ -16,7 +16,7 @@
 
 # v3.7: GUI v3.0 - real update check against the published manifest (see the
 # "Update check" block near the end of the file).
-$ScriptVersion = '2026.11.10-gui-v3.2-64bit-guard'
+$ScriptVersion = '2026.11.18-gui-v3.3-update-check-direct'
 
 # --- Diagnostic logging ------------------------------------------------------
 $script:DiagLog = $null
@@ -603,7 +603,9 @@ Set-Status $ReadyText
 # runspace for completion from the UI thread, so the UI never blocks and no
 # WPF object is ever touched cross-thread. Any failure = silent no-op (the
 # footer keeps saying "Ready"); outcomes are logged via Write-Diag.
-$script:UpdateManifestUrl = 'https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/iDezign_Versions.json'
+# v4.2: ask idezign.com first (always current); jsDelivr (can lag up to 12 h)
+# is only the fallback. '|' separates the URLs, tried in order.
+$script:UpdateManifestUrl = 'https://idezign.com/scripts/iDezign_Versions.json|https://cdn.jsdelivr.net/gh/idezigntech/idezign-site@main/scripts/iDezign_Versions.json'
 $script:UpdateDownloadUrl = 'https://github.com/idezigntech/idezign-site/releases/latest/download/iDezign-Toolkit.exe'
 $script:UpdateAvailable   = $false
 
@@ -649,10 +651,20 @@ try {
         try {
             # PS 5.1 on older .NET may not offer TLS 1.2 by default; GitHub/jsDelivr require it.
             try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
-            $resp = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
-            $json = $resp.Content | ConvertFrom-Json -ErrorAction Stop
-            if ($json.toolkitVersion) { return [string]$json.toolkitVersion }
-            return $null
+            $lastErr = 'no manifest URL'
+            foreach ($u in ($Url -split '\|')) {
+                try {
+                    $resp = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 5 -Headers @{ 'Cache-Control' = 'no-cache' } -ErrorAction Stop
+                    $text = $resp.Content
+                    if ($text -is [byte[]]) { $text = [System.Text.Encoding]::UTF8.GetString($text) }
+                    $json = ([string]$text).TrimStart([char]0xFEFF) | ConvertFrom-Json -ErrorAction Stop
+                    if ($json.toolkitVersion) { return [string]$json.toolkitVersion }
+                    $lastErr = 'no toolkitVersion in manifest'
+                } catch {
+                    $lastErr = $_.Exception.Message
+                }
+            }
+            return ('ERR:' + $lastErr)
         } catch {
             return ('ERR:' + $_.Exception.Message)
         }
