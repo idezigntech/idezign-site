@@ -91,7 +91,7 @@ $VerbosePreference     = 'SilentlyContinue'
 
 # Version stamp - bumped when behavior changes. Shown in console banner
 # and recorded in transcript log so we can verify deployed version.
-$ScriptVersion = '2026.11.18-v4.0.2-teamviewer-optional'
+$ScriptVersion = '2026.11.18-v4.1-dentrix-quickbooks-rules'
 
 #region --- Unattended mode: temporary auto-logon (v3.9.1) -------------------
 # Lets a Cleanup run survive its Windows Update reboots with nobody at the
@@ -915,6 +915,8 @@ if (-not $ResumeAfterUpdate) {
     Write-Host ("  Power extras    : " + ($(if($doConfigurePower){'YES (HDD never / display 1hr)'}else{'NO'})))
     Write-Host ("  Net + Sharing   : " + ($(if($doSetNetworkPrivate){'YES (Private + File/Print + Discovery)'}else{'NO'})))
     Write-Host ("  Dentrix excl.   : " + ($(if($doDentrixExclusions){'YES (Dentrix + SQL paths)'}else{'NO'})))
+    Write-Host ("  Dentrix firewall: " + ($(if($doDentrixExclusions){'YES when Dentrix is installed'}else{'NO'})))
+    Write-Host ("  QuickBooks      : " + ($(if($doDentrixExclusions){'YES when installed (firewall rules + Defender exclusions)'}else{'NO'})))
     # OneDrive nuke summary with sub-option indicators
     Write-Host ("  Nag screens     : ALWAYS OFF (+ 26H2 policies)")
     Write-Host ("  Nuke OneDrive   : " + ($(if($doNukeOneDrive){'YES'}else{'NO'})))
@@ -2892,6 +2894,221 @@ if ($doDentrixExclusions) {
     }
 } else {
     Write-Host "`n[Phase 1j] Dentrix/SQL exclusions: SKIPPED." -ForegroundColor DarkGray
+}
+
+# --- 1j-1. Dentrix network firewall rules (v4.1) ---
+# Only when Dentrix is installed. Dentrix's own installer normally adds its
+# exceptions, but they go missing after firewall resets and on re-imaged
+# machines. Two layers, Domain + Private only, group "iDezign Dentrix",
+# rebuilt on every run:
+#   - PROGRAM rules for SQL Server (sqlservr.exe / sqlbrowser.exe): the
+#     Dentrix database instance listens on a port that is not fixed.
+#   - PORT rules: UDP 1434 (SQL Browser - how workstations find the
+#     instance) and the Dentrix G-series service ports TCP 5712, 6597,
+#     6602-6606, 6610. That port list is from a third-party IT reference,
+#     not a Henry Schein document - extra allow rules on a private LAN.
+# File sharing (TCP 445) is already handled by Phase 1h.
+if ($doDentrixExclusions) {
+    Write-Host "`n[Phase 1j-1] Dentrix firewall rules..." -ForegroundColor Green
+    $dtxDirs = @('C:\Program Files (x86)\Dentrix', 'C:\Program Files\Dentrix', 'C:\Dentrix') | Where-Object { Test-Path -LiteralPath $_ }
+    if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        Write-Host "  Firewall cmdlets not available - skipping." -ForegroundColor DarkYellow
+    } elseif (@($dtxDirs).Count -eq 0) {
+        Write-Host "  Dentrix is not installed on this machine - nothing to do." -ForegroundColor DarkGray
+        Write-Host "  (Run Cleanup again after Dentrix is installed to add the rules.)" -ForegroundColor DarkGray
+    } else {
+        $dtxGroup = 'iDezign Dentrix'
+        try { Get-NetFirewallRule -Group $dtxGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue } catch { }
+        $dtxMade = 0; $dtxFail = 0
+
+        $sqlExes = @()
+        foreach ($pf in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if (-not $pf) { continue }
+            $sqlRoot = Join-Path $pf 'Microsoft SQL Server'
+            if (Test-Path -LiteralPath $sqlRoot) {
+                $sqlExes += @(Get-ChildItem -LiteralPath $sqlRoot -Recurse -File -Filter 'sql*.exe' -ErrorAction SilentlyContinue |
+                              Where-Object { $_.Name -eq 'sqlservr.exe' -or $_.Name -eq 'sqlbrowser.exe' } | ForEach-Object { $_.FullName })
+            }
+        }
+        foreach ($exe in @($sqlExes | Select-Object -Unique)) {
+            $leaf = Split-Path $exe -Leaf
+            try {
+                New-NetFirewallRule -DisplayName "iDezign Dentrix - $leaf Inbound" -Group $dtxGroup `
+                    -Direction Inbound -Action Allow -Program $exe -Profile Domain,Private -ErrorAction Stop | Out-Null
+                $dtxMade++
+                Write-Host "    + $exe" -ForegroundColor DarkGray
+            } catch {
+                $dtxFail++
+                Write-Host "    ! $leaf - $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+        if (@($sqlExes).Count -eq 0) {
+            Write-Host "    (no SQL Server on this machine - workstation: port rules only)" -ForegroundColor DarkGray
+        }
+
+        $dtxPortRules = @(
+            @{ Name = 'SQL Browser UDP 1434';           Proto = 'UDP'; Ports = @('1434') },
+            @{ Name = 'Dentrix services TCP 5712,6597,6602-6606,6610'; Proto = 'TCP'; Ports = @('5712', '6597', '6602-6606', '6610') }
+        )
+        foreach ($pr in $dtxPortRules) {
+            try {
+                New-NetFirewallRule -DisplayName "iDezign Dentrix - $($pr.Name) Inbound" -Group $dtxGroup `
+                    -Direction Inbound -Action Allow -Protocol $pr.Proto -LocalPort $pr.Ports `
+                    -Profile Domain,Private -ErrorAction Stop | Out-Null
+                $dtxMade++
+                Write-Host "    + $($pr.Name)" -ForegroundColor DarkGray
+            } catch {
+                $dtxFail++
+                Write-Host "    ! $($pr.Name) - $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
+        }
+        $dtxNow = @(Get-NetFirewallRule -Group $dtxGroup -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' }).Count
+        if ($dtxFail -eq 0 -and $dtxNow -eq $dtxMade) {
+            Write-Host "  verified $dtxNow Dentrix firewall rules in place (Domain + Private)." -ForegroundColor Green
+        } else {
+            Write-Host "  $dtxNow of $($dtxMade + $dtxFail) rules in place - check Windows Firewall > group '$dtxGroup'." -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "`n[Phase 1j-1] Dentrix firewall rules: SKIPPED." -ForegroundColor DarkGray
+}
+
+# --- 1j-2. QuickBooks Desktop network firewall rules (v4.1) ---
+# Multi-user QuickBooks (company file on a server/host PC) fails with H202 /
+# H505 when Windows Firewall blocks its programs. Intuit's fix is a firewall
+# exception for each QuickBooks program plus TCP 8019; the database port
+# itself changes per QuickBooks year, so the rules here are PROGRAM based
+# (any port that QBDBMgrN.exe etc. use is allowed) rather than a port list
+# that goes stale every year.
+#   - Only when QuickBooks Desktop is installed (the rules need real paths).
+#   - Domain + Private profiles only - never Public.
+#   - Our rules live in the group "iDezign QuickBooks" and are rebuilt on
+#     every run, so a QuickBooks upgrade is picked up by re-running Cleanup.
+if ($doDentrixExclusions) {
+    Write-Host "`n[Phase 1j-2] QuickBooks Desktop firewall rules..." -ForegroundColor Green
+    if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        Write-Host "  Firewall cmdlets not available - skipping." -ForegroundColor DarkYellow
+    } else {
+        $qbExeNames = @(
+            'QBW32.exe', 'QBW.exe', 'QBDBMgrN.exe', 'QBDBMgr.exe', 'QBServerUtilityMgr.exe',
+            'QBCFMonitorService.exe', 'QBLaunch.exe', 'QBUpdate.exe', 'QuickBooksMessaging.exe',
+            'FileManagement.exe', 'FileMovementExe.exe', 'AutoBackupExe.exe', 'DBManagerExe.exe',
+            'Dbmlsync.exe', 'IntuitSyncManager.exe', 'OnlineBackup.exe'
+        )
+        $qbRoots = @()
+        foreach ($pf in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if (-not $pf) { continue }
+            $qbRoots += @(Get-ChildItem -Path (Join-Path $pf 'Intuit') -Directory -Filter 'QuickBooks*' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+            foreach ($sub in @('Common Files\Intuit\QuickBooks', 'Common Files\Intuit\Sync', 'QuickBooks Online Backup')) {
+                $p = Join-Path $pf $sub
+                if (Test-Path -LiteralPath $p) { $qbRoots += $p }
+            }
+        }
+        $qbExes = @()
+        foreach ($r in ($qbRoots | Select-Object -Unique)) {
+            $qbExes += @(Get-ChildItem -LiteralPath $r -Recurse -File -Filter '*.exe' -ErrorAction SilentlyContinue |
+                         Where-Object { $qbExeNames -contains $_.Name } | ForEach-Object { $_.FullName })
+        }
+        $qbExes = @($qbExes | Select-Object -Unique)
+        $qbInstalled = @($qbExes | Where-Object { $_ -match '\\(QBW32|QBW|QBDBMgrN)\.exe$' }).Count -gt 0
+
+        if (-not $qbInstalled) {
+            Write-Host "  QuickBooks Desktop is not installed on this machine - nothing to do." -ForegroundColor DarkGray
+            Write-Host "  (Run Cleanup again after QuickBooks is installed to add the rules.)" -ForegroundColor DarkGray
+        } else {
+            $qbGroup = 'iDezign QuickBooks'
+            try { Get-NetFirewallRule -Group $qbGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue } catch { }
+            $qbMade = 0; $qbFail = 0
+            foreach ($exe in $qbExes) {
+                $leaf = Split-Path $exe -Leaf
+                $ver  = Split-Path (Split-Path $exe -Parent) -Leaf
+                foreach ($dir in @('Inbound', 'Outbound')) {
+                    try {
+                        New-NetFirewallRule -DisplayName "iDezign QuickBooks - $leaf ($ver) $dir" -Group $qbGroup `
+                            -Direction $dir -Action Allow -Program $exe -Profile Domain,Private `
+                            -ErrorAction Stop | Out-Null
+                        $qbMade++
+                    } catch {
+                        $qbFail++
+                        Write-Host "    ! $leaf $dir - $($_.Exception.Message)" -ForegroundColor DarkYellow
+                    }
+                }
+                Write-Host "    + $exe" -ForegroundColor DarkGray
+            }
+            # Intuit's fixed port for 2019 and later (the per-year port is
+            # covered by the QBDBMgrN.exe program rule above).
+            foreach ($dir in @('Inbound', 'Outbound')) {
+                try {
+                    New-NetFirewallRule -DisplayName "iDezign QuickBooks - TCP 8019 $dir" -Group $qbGroup `
+                        -Direction $dir -Action Allow -Protocol TCP -LocalPort $(if ($dir -eq 'Inbound') { 8019 } else { 'Any' }) `
+                        -RemotePort $(if ($dir -eq 'Outbound') { 8019 } else { 'Any' }) -Profile Domain,Private `
+                        -ErrorAction Stop | Out-Null
+                    $qbMade++
+                } catch {
+                    $qbFail++
+                    Write-Host "    ! TCP 8019 $dir - $($_.Exception.Message)" -ForegroundColor DarkYellow
+                }
+            }
+            $qbNow = @(Get-NetFirewallRule -Group $qbGroup -ErrorAction SilentlyContinue | Where-Object { $_.Enabled -eq 'True' }).Count
+            if ($qbFail -eq 0 -and $qbNow -eq $qbMade) {
+                Write-Host "  verified $qbNow firewall rules in place for $($qbExes.Count) QuickBooks programs + TCP 8019 (Domain + Private)." -ForegroundColor Green
+            } else {
+                Write-Host "  $qbNow of $($qbMade + $qbFail) rules in place - check Windows Firewall > group '$qbGroup'." -ForegroundColor Yellow
+            }
+
+            # --- QuickBooks Defender exclusions (v4.1) ---
+            # Same idea as the Dentrix/SQL exclusions in Phase 1j: keep
+            # real-time scanning off the QuickBooks programs and the company
+            # file folders (scanning .QBW/.TLG files in use slows multi-user
+            # mode and can lock the file). Folders that exist only.
+            if (Get-Command Add-MpPreference -ErrorAction SilentlyContinue) {
+                Write-Host "  Adding Defender exclusions for QuickBooks..." -ForegroundColor DarkGray
+                $qbExclPaths = @($qbRoots | Select-Object -Unique)
+                foreach ($p in @((Join-Path $env:ProgramData 'Intuit'), (Join-Path $env:PUBLIC 'Documents\Intuit\QuickBooks'))) {
+                    if (Test-Path -LiteralPath $p) { $qbExclPaths += $p }
+                }
+                $qbExclProcs = @($qbExes | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique)
+                $qbPref = $null
+                try { $qbPref = Get-MpPreference -ErrorAction Stop } catch { }
+                $qbHavePaths = @(); $qbHaveProcs = @()
+                if ($qbPref) {
+                    $qbHavePaths = @($qbPref.ExclusionPath)    | ForEach-Object { [string]$_ }
+                    $qbHaveProcs = @($qbPref.ExclusionProcess) | ForEach-Object { [string]$_ }
+                }
+                foreach ($p in $qbExclPaths) {
+                    if ($qbHavePaths -contains $p) { continue }
+                    try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop; Write-Host "    + $p" -ForegroundColor DarkGray }
+                    catch { Write-Host "    ! Could not exclude $p - $($_.Exception.Message)" -ForegroundColor DarkYellow }
+                }
+                foreach ($p in $qbExclProcs) {
+                    if ($qbHaveProcs -contains $p) { continue }
+                    try { Add-MpPreference -ExclusionProcess $p -ErrorAction Stop; Write-Host "    + $p" -ForegroundColor DarkGray }
+                    catch { Write-Host "    ! Could not exclude process $p - $($_.Exception.Message)" -ForegroundColor DarkYellow }
+                }
+                try {
+                    $qbPref2 = Get-MpPreference -ErrorAction Stop
+                    $np = @($qbPref2.ExclusionPath)    | ForEach-Object { [string]$_ }
+                    $nq = @($qbPref2.ExclusionProcess) | ForEach-Object { [string]$_ }
+                    $qbMissing = @()
+                    foreach ($w in $qbExclPaths) { if ($np -notcontains $w) { $qbMissing += $w } }
+                    foreach ($w in $qbExclProcs) { if ($nq -notcontains $w) { $qbMissing += $w } }
+                    $qbWant = $qbExclPaths.Count + $qbExclProcs.Count
+                    if ($qbMissing.Count -eq 0) {
+                        Write-Host "  verified $qbWant/$qbWant QuickBooks Defender exclusions present." -ForegroundColor Green
+                    } else {
+                        Write-Host "  verified $($qbWant - $qbMissing.Count)/$qbWant QuickBooks Defender exclusions - MISSING (Tamper Protection?):" -ForegroundColor Yellow
+                        $qbMissing | ForEach-Object { Write-Host "    - $_" -ForegroundColor Yellow }
+                    }
+                } catch {
+                    Write-Host "  (could not verify QuickBooks exclusions: $($_.Exception.Message))" -ForegroundColor DarkYellow
+                }
+            } else {
+                Write-Host "  Defender cmdlets not available - QuickBooks exclusions skipped." -ForegroundColor DarkYellow
+            }
+        }
+    }
+} else {
+    Write-Host "`n[Phase 1j-2] QuickBooks firewall rules: SKIPPED." -ForegroundColor DarkGray
 }
 
 # --- 1k. Strip Microsoft consumer integrations (OneDrive + Teams + nags) ---
