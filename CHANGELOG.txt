@@ -5,6 +5,16 @@ No "second build" or .01 steps. Major bump (X.0) for big changes.
 The version shown in the launcher's title bar comes from "toolkitVersion" in
 iDezign_Versions.json - bump it there with every change.
 
+v4.2 - 2026-11-18 - Honest version line; launcher update check reads idezign.com
+  * Every tool's startup line used to say "running the LATEST version"
+    when it had only compared itself to the manifest in its own folder -
+    an old download always called itself latest. It now says the script
+    "matches this toolkit package vX.Y" and points at the launcher footer
+    for the online check.
+  * The launcher's update check asks idezign.com first (always current);
+    the jsDelivr mirror, which can lag up to 12 hours, is only the
+    fallback. A new release now shows as "Update available" right away.
+
 v4.1 - 2026-11-18 - Cleanup: Defender exclusions AND firewall rules for both Dentrix and QuickBooks
   * Dentrix already had Defender exclusions (Phase 1j). New Phase 1j-1
     adds its firewall rules when Dentrix is installed: SQL Server and SQL
